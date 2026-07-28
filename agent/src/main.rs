@@ -20,6 +20,7 @@ use sysinfo::System;
 
 struct AppState {
     docker: Option<Docker>,
+    monitor_ports: Vec<u16>,
 }
 
 struct AuthToken;
@@ -58,6 +59,8 @@ struct HostMetrics {
     memory_used_mb: u64,
     memory_percent: f32,
     uptime_seconds: u64,
+    total_connections: usize,
+    unique_connections: usize,
 }
 
 #[derive(Serialize)]
@@ -273,7 +276,16 @@ async fn main() {
         }
     };
 
-    let state = Arc::new(AppState { docker });
+    // Parse MONITOR_PORTS env (default: 80,443)
+    let monitor_ports: Vec<u16> = env::var("MONITOR_PORTS")
+        .unwrap_or_else(|_| "80,443".to_string())
+        .split(',')
+        .filter_map(|s| s.trim().parse::<u16>().ok())
+        .collect();
+
+    println!("[*] Host monitor ports: {:?}", monitor_ports);
+
+    let state = Arc::new(AppState { docker, monitor_ports });
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -324,6 +336,16 @@ async fn get_metrics(
         memory_used_mb: used_mb,
         memory_percent,
         uptime_seconds,
+        total_connections: 0,
+        unique_connections: 0,
+    };
+
+    // 2. Compute host-level connection metrics for configured ports
+    let host_conn = get_unique_connections_for_ports(&state.monitor_ports);
+    let host = HostMetrics {
+        total_connections: host_conn.total_connections,
+        unique_connections: host_conn.unique_connections,
+        ..host
     };
 
     // 2. Get Docker Containers list (if Docker is available)

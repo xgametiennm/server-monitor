@@ -44,6 +44,8 @@ struct ServerOverview {
     latest_mem: Option<f32>,
     container_count: usize,
     running_containers: Vec<String>,
+    host_total_connections: Option<usize>,
+    host_unique_connections: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -64,6 +66,8 @@ struct HostMetrics {
     memory_total_mb: u64,
     memory_used_mb: u64,
     uptime_seconds: u64,
+    total_connections: Option<usize>,
+    unique_connections: Option<usize>,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -93,6 +97,7 @@ struct MetricHistoryPoint {
 struct MetricsCache {
     history: HashMap<i32, VecDeque<MetricHistoryPoint>>,
     containers: HashMap<i32, Vec<ContainerInfo>>,
+    hosts: HashMap<i32, HostMetrics>,
 }
 
 struct AppState {
@@ -127,6 +132,7 @@ async fn main() {
     let cache = Arc::new(Mutex::new(MetricsCache {
         history: HashMap::new(),
         containers: HashMap::new(),
+        hosts: HashMap::new(),
     }));
 
     let http_client = reqwest::Client::builder()
@@ -264,8 +270,9 @@ async fn start_polling_worker(
                                         history.pop_front();
                                     }
 
-                                    // Update containers
+                                    // Update containers and host metrics
                                     c.containers.insert(server.id, metrics.containers);
+                                    c.hosts.insert(server.id, metrics.host);
                                 } else {
                                     eprintln!("[-] Server ID {}: Failed to parse JSON metrics from Agent", server.id);
                                 }
@@ -619,6 +626,10 @@ async fn get_overview(
             .map(|c| c.iter().map(|item| item.name.clone()).collect())
             .unwrap_or_else(Vec::new);
 
+        let host_metrics = cache.hosts.get(&s.id);
+        let host_total_connections = host_metrics.and_then(|h| h.total_connections);
+        let host_unique_connections = host_metrics.and_then(|h| h.unique_connections);
+
         result.push(ServerOverview {
             id: s.id,
             name: s.name,
@@ -628,6 +639,8 @@ async fn get_overview(
             latest_mem,
             container_count,
             running_containers,
+            host_total_connections,
+            host_unique_connections,
         });
     }
 

@@ -61,6 +61,8 @@ interface ServerOverview {
   latest_mem: number | null
   container_count: number
   running_containers: string[]
+  host_total_connections?: number
+  host_unique_connections?: number
 }
 
 interface ContainerInfo {
@@ -663,7 +665,9 @@ export default function App() {
                 <div>
                   <div className="text-[10px] font-bold text-slate-400 uppercase">Unique Clients (IPs)</div>
                   <div className="text-lg font-extrabold text-emerald-400 mt-0.5 font-mono">
-                    {containers.reduce((acc, c) => acc + (c.unique_connections || 0), 0)}
+                    {containers.length > 0
+                      ? containers.reduce((acc, c) => acc + (c.unique_connections || 0), 0)
+                      : overviewData.reduce((acc, s) => acc + (s.host_unique_connections || 0), 0)}
                   </div>
                 </div>
               </div>
@@ -730,11 +734,18 @@ export default function App() {
                               </div>
                             </div>
 
-                            {/* Containers summary */}
+                            {/* Containers & Host Connections summary */}
                             <div className="border-t border-slate-800 pt-3 space-y-1.5">
-                              <span className="text-[10px] text-slate-400 font-bold uppercase">
-                                Containers đang chạy ({s.container_count})
-                              </span>
+                              <div className="flex justify-between items-center">
+                                <span className="text-[10px] text-slate-400 font-bold uppercase">
+                                  {s.container_count > 0 ? `Containers (${s.container_count})` : 'Kết nối Dịch vụ Host'}
+                                </span>
+                                {s.host_unique_connections !== undefined && s.host_unique_connections !== null && (
+                                  <span className="text-[10px] font-mono font-bold text-emerald-400">
+                                    {s.host_unique_connections} IP active
+                                  </span>
+                                )}
+                              </div>
                               <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto">
                                 {s.running_containers.length > 0 ? (
                                   s.running_containers.map((name, idx) => (
@@ -743,7 +754,9 @@ export default function App() {
                                     </span>
                                   ))
                                 ) : (
-                                  <span className="text-[10px] text-slate-600 font-semibold italic">Không có container nào</span>
+                                  <span className="text-[10px] text-slate-500 italic font-mono">
+                                    Giám sát Host ({s.host_unique_connections ?? 0} Unique IPs / {s.host_total_connections ?? 0} conns)
+                                  </span>
                                 )}
                               </div>
                             </div>

@@ -19,12 +19,16 @@ echo -e "${BLUE}====================================================${NC}"
 # 1. Ask for configuration parameters
 default_port="9100"
 default_token=$(openssl rand -hex 12 2>/dev/null || echo "agent-secret-$(date +%s)")
+default_monitor_ports="80,443"
 
 read -p "Nhập Cổng (Port) chạy Agent [Mặc định: $default_port]: " PORT
 PORT=${PORT:-$default_port}
 
 read -p "Nhập Mã Token bảo mật [Mặc định: $default_token]: " TOKEN
 TOKEN=${TOKEN:-$default_token}
+
+read -p "Nhập các Cổng (Ports) cần giám sát kết nối Unique (cách nhau dấu phẩy) [Mặc định: $default_monitor_ports]: " MONITOR_PORTS
+MONITOR_PORTS=${MONITOR_PORTS:-$default_monitor_ports}
 
 # 2. Check and Install Rust/Cargo if missing
 if ! command -v cargo &> /dev/null; then
@@ -69,6 +73,7 @@ User=root
 WorkingDirectory=$(pwd)
 Environment=PORT=$PORT
 Environment=AGENT_SECRET_TOKEN=$TOKEN
+Environment=MONITOR_PORTS=$MONITOR_PORTS
 ExecStart=$BINARY_PATH
 Restart=always
 RestartSec=5
