@@ -170,7 +170,7 @@ export default function App() {
   // Add Server States
   const [showAddModal, setShowAddModal] = useState(false)
   const [newName, setNewName] = useState('')
-  const [newUrl, setNewUrl] = useState('http://localhost:9100')
+  const [newUrl, setNewUrl] = useState('http://localhost:6678')
   const [newToken, setNewToken] = useState('secret-agent-token-123')
 
   // Edit Server States
@@ -347,7 +347,7 @@ export default function App() {
       setShowOverview(false)
       setShowAddModal(false)
       setNewName('')
-      setNewUrl('http://localhost:9100')
+      setNewUrl('http://localhost:6678')
       setNewToken('secret-agent-token-123')
     } catch (e) {
       alert('Không thể kết nối đến Agent. Kiểm tra lại thông số!')
@@ -1616,7 +1616,7 @@ export default function App() {
                   type="url"
                   value={newUrl}
                   onChange={e => setNewUrl(e.target.value)}
-                  placeholder="http://192.168.1.100:9100"
+                  placeholder="http://192.168.1.100:6678"
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-slate-100 focus:outline-none focus:border-blue-500 text-xs font-mono transition-all"
                   required
                 />
@@ -1684,7 +1684,7 @@ export default function App() {
                   type="url"
                   value={editUrl}
                   onChange={e => setEditUrl(e.target.value)}
-                  placeholder="http://192.168.1.100:9100"
+                  placeholder="http://192.168.1.100:6678"
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-slate-100 focus:outline-none focus:border-blue-500 text-xs font-mono transition-all"
                   required
                 />

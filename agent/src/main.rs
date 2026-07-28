@@ -252,7 +252,7 @@ struct ActionPayload {
 
 #[tokio::main]
 async fn main() {
-    let port = env::var("PORT").unwrap_or_else(|_| "9100".to_string());
+    let port = env::var("PORT").unwrap_or_else(|_| "6678".to_string());
     let addr = format!("0.0.0.0:{}", port);
 
     // Initialize Docker client (optional - agent works without Docker)

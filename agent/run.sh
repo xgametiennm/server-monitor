@@ -17,7 +17,7 @@ echo -e "${BLUE}      GAME SERVER MONITORING AGENT DEPLOYMENT       ${NC}"
 echo -e "${BLUE}====================================================${NC}"
 
 # 1. Ask for configuration parameters
-default_port="9100"
+default_port="6678"
 default_token=$(openssl rand -hex 12 2>/dev/null || echo "agent-secret-$(date +%s)")
 default_monitor_ports="80,443"
 
