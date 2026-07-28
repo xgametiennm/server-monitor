@@ -19,7 +19,6 @@ import {
   FileText,
   X,
   LayoutDashboard,
-  ShieldAlert,
   ServerCrash,
   CalendarDays,
   Users,
@@ -46,6 +45,7 @@ interface GameServer {
   agent_url: string
   agent_token: string
   status: string
+  status_reason?: string
   ssh_host?: string
   ssh_port?: number
   ssh_user?: string
@@ -57,6 +57,7 @@ interface ServerOverview {
   name: string
   agent_url: string
   status: string
+  status_reason?: string
   latest_cpu: number | null
   latest_mem: number | null
   container_count: number
@@ -764,10 +765,13 @@ export default function App() {
                             </div>
                           </div>
                         ) : (
-                          <div className="flex flex-col items-center justify-center py-6 text-center bg-slate-950/20 border border-slate-850 rounded-xl p-3">
-                            <ShieldAlert className="w-6 h-6 text-red-500 mb-1.5" />
-                            <p className="text-[11px] text-slate-400 leading-relaxed max-w-[200px]">
-                              Không thể kết nối đến Agent. Kiểm tra cài đặt dịch vụ.
+                          <div className="flex flex-col items-center justify-center py-5 text-center bg-red-950/20 border border-red-500/25 rounded-xl p-3.5 space-y-2">
+                            <div className="flex items-center gap-1.5 text-red-400 font-bold text-xs">
+                              <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0" />
+                              <span>Kết nối Agent Thất Bại</span>
+                            </div>
+                            <p className="text-[11px] text-red-300/90 leading-relaxed font-mono bg-slate-950/80 px-2.5 py-1.5 rounded-lg border border-red-500/20 w-full break-words">
+                              {s.status_reason || 'Không thể kết nối đến Agent. Kiểm tra cài đặt dịch vụ và IP/Port.'}
                             </p>
                           </div>
                         )}
@@ -873,6 +877,21 @@ export default function App() {
                 </button>
               </div>
             </div>
+
+            {/* Offline Alert Banner in Server Detail View */}
+            {selectedServer.status !== 'online' && (
+              <div className="bg-red-950/30 border border-red-500/30 rounded-2xl p-4 flex items-center gap-3.5 shadow-lg">
+                <div className="p-2.5 bg-red-500/20 text-red-400 rounded-xl">
+                  <AlertTriangle className="w-6 h-6 text-red-500" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-red-400 uppercase tracking-wider">Cảnh báo: Agent Đang Ngoại Tuyến (Offline)</h4>
+                  <p className="text-xs text-red-300 font-mono mt-0.5">
+                    Nguyên nhân: {overviewData.find(s => s.id === selectedServer.id)?.status_reason || selectedServer.status_reason || 'Agent URL không phản hồi. Kiểm tra lại dịch vụ game-agent và cấu hình IP/Port.'}
+                  </p>
+                </div>
+              </div>
+            )}
 
             {/* Date Filter Bar */}
             <div className="bg-slate-900 border border-slate-800/80 rounded-2xl p-4 shadow-md flex-shrink-0 space-y-3">
@@ -1925,6 +1944,10 @@ function SshSingleTabSession({
     ws.onerror = () => {
       setConnecting(false)
       term.writeln('\r\n\x1b[1;31m[-] Lỗi kết nối WebSocket SSH!\x1b[0m')
+      term.writeln('\x1b[1;33m[*] Nguyên nhân chẩn đoán lỗi:\x1b[0m')
+      term.writeln(`  • Máy chủ backend không thể kết nối tới Host "${host}" (Port: ${port}).`)
+      term.writeln(`  • Thông tin xác thực SSH sai (User: "${user}").`)
+      term.writeln(`  • Tường lửa (UFW/Iptables) chặn kết nối SSH vào cổng ${port}.\r\n`)
     }
 
     ws.onclose = () => {

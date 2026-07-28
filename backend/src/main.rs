@@ -21,6 +21,7 @@ struct GameServerDb {
     agent_url: String,
     agent_token: String,
     status: String,
+    status_reason: Option<String>,
     ssh_host: Option<String>,
     ssh_port: Option<i32>,
     ssh_user: Option<String>,
@@ -42,6 +43,7 @@ struct ServerOverview {
     name: String,
     agent_url: String,
     status: String,
+    status_reason: Option<String>,
     latest_cpu: Option<f32>,
     latest_mem: Option<f32>,
     container_count: usize,
@@ -197,6 +199,7 @@ async fn init_db(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
     let _ = sqlx::query("ALTER TABLE game_servers ADD COLUMN IF NOT EXISTS ssh_port INT DEFAULT 22").execute(pool).await;
     let _ = sqlx::query("ALTER TABLE game_servers ADD COLUMN IF NOT EXISTS ssh_user VARCHAR(255) DEFAULT 'root'").execute(pool).await;
     let _ = sqlx::query("ALTER TABLE game_servers ADD COLUMN IF NOT EXISTS ssh_password VARCHAR(255) DEFAULT ''").execute(pool).await;
+    let _ = sqlx::query("ALTER TABLE game_servers ADD COLUMN IF NOT EXISTS status_reason VARCHAR(500) DEFAULT ''").execute(pool).await;
 
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS server_metrics_history (
@@ -223,7 +226,7 @@ async fn start_polling_worker(
 ) {
     loop {
         if let Ok(servers) = sqlx::query_as::<_, GameServerDb>(
-            "SELECT id, name, agent_url, agent_token, status, ssh_host, ssh_port, ssh_user, ssh_password FROM game_servers"
+            "SELECT id, name, agent_url, agent_token, status, status_reason, ssh_host, ssh_port, ssh_user, ssh_password FROM game_servers"
         )
         .fetch_all(&pool)
         .await
@@ -245,8 +248,8 @@ async fn start_polling_worker(
                         Ok(resp) => {
                             if resp.status().is_success() {
                                 if let Ok(metrics) = resp.json::<MetricsResponse>().await {
-                                    // Update DB status to 'online'
-                                    let _ = sqlx::query("UPDATE game_servers SET status = 'online' WHERE id = $1")
+                                    // Update DB status to 'online' and clear error reason
+                                    let _ = sqlx::query("UPDATE game_servers SET status = 'online', status_reason = '' WHERE id = $1")
                                         .bind(server.id)
                                         .execute(&pool_clone)
                                         .await;
@@ -293,20 +296,43 @@ async fn start_polling_worker(
                                     c.containers.insert(server.id, metrics.containers);
                                     c.hosts.insert(server.id, metrics.host);
                                 } else {
-                                    eprintln!("[-] Server ID {}: Failed to parse JSON metrics from Agent", server.id);
+                                    let reason = "Dữ liệu JSON trả về từ Agent không đúng định dạng".to_string();
+                                    eprintln!("[-] Server ID {}: {}", server.id, reason);
+                                    let _ = sqlx::query("UPDATE game_servers SET status = 'offline', status_reason = $2 WHERE id = $1")
+                                        .bind(server.id)
+                                        .bind(reason)
+                                        .execute(&pool_clone)
+                                        .await;
                                 }
                             } else {
-                                eprintln!("[-] Server ID {}: Agent returned status error: {}", server.id, resp.status());
-                                let _ = sqlx::query("UPDATE game_servers SET status = 'offline' WHERE id = $1")
+                                let status_code = resp.status();
+                                let reason = if status_code == reqwest::StatusCode::UNAUTHORIZED {
+                                    "Mã Token bảo mật (Secret Token) không chính xác (401 Unauthorized)".to_string()
+                                } else if status_code == reqwest::StatusCode::NOT_FOUND {
+                                    "Endpoint Agent không tồn tại (404 Not Found)".to_string()
+                                } else {
+                                    format!("Agent trả về mã lỗi HTTP: {}", status_code)
+                                };
+                                eprintln!("[-] Server ID {}: {}", server.id, reason);
+                                let _ = sqlx::query("UPDATE game_servers SET status = 'offline', status_reason = $2 WHERE id = $1")
                                     .bind(server.id)
+                                    .bind(reason)
                                     .execute(&pool_clone)
                                     .await;
                             }
                         }
                         Err(e) => {
-                            eprintln!("[-] Server ID {}: Failed to connect to Agent at {}. Error: {}", server.id, server.agent_url, e);
-                            let _ = sqlx::query("UPDATE game_servers SET status = 'offline' WHERE id = $1")
+                            let reason = if e.is_timeout() {
+                                "Hết thời gian chờ kết nối (Timeout 5s). Kiểm tra IP và Port của Agent.".to_string()
+                            } else if e.is_connect() {
+                                format!("Không thể kết nối tới {}. Agent chưa chạy hoặc bị Firewall/UFW chặn.", server.agent_url)
+                            } else {
+                                format!("Lỗi kết nối Agent: {}", e)
+                            };
+                            eprintln!("[-] Server ID {}: {}", server.id, reason);
+                            let _ = sqlx::query("UPDATE game_servers SET status = 'offline', status_reason = $2 WHERE id = $1")
                                 .bind(server.id)
+                                .bind(reason)
                                 .execute(&pool_clone)
                                 .await;
                         }
@@ -323,7 +349,7 @@ async fn list_servers(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<GameServerDb>>, StatusCode> {
     let servers = sqlx::query_as::<_, GameServerDb>(
-        "SELECT id, name, agent_url, agent_token, status, ssh_host, ssh_port, ssh_user, ssh_password FROM game_servers ORDER BY id ASC"
+        "SELECT id, name, agent_url, agent_token, status, status_reason, ssh_host, ssh_port, ssh_user, ssh_password FROM game_servers ORDER BY id ASC"
     )
     .fetch_all(&state.pool)
     .await
@@ -337,9 +363,9 @@ async fn create_server(
     Json(payload): Json<CreateServerPayload>,
 ) -> Result<Json<GameServerDb>, StatusCode> {
     let server = sqlx::query_as::<_, GameServerDb>(
-        "INSERT INTO game_servers (name, agent_url, agent_token, status, ssh_host, ssh_port, ssh_user, ssh_password)
-         VALUES ($1, $2, $3, 'unknown', $4, $5, $6, $7)
-         RETURNING id, name, agent_url, agent_token, status, ssh_host, ssh_port, ssh_user, ssh_password"
+        "INSERT INTO game_servers (name, agent_url, agent_token, status, status_reason, ssh_host, ssh_port, ssh_user, ssh_password)
+         VALUES ($1, $2, $3, 'unknown', '', $4, $5, $6, $7)
+         RETURNING id, name, agent_url, agent_token, status, status_reason, ssh_host, ssh_port, ssh_user, ssh_password"
     )
     .bind(payload.name)
     .bind(payload.agent_url)
@@ -386,10 +412,10 @@ async fn update_server(
 ) -> Result<Json<GameServerDb>, StatusCode> {
     let server = sqlx::query_as::<_, GameServerDb>(
         "UPDATE game_servers
-         SET name = $1, agent_url = $2, agent_token = $3, status = 'unknown',
+         SET name = $1, agent_url = $2, agent_token = $3, status = 'unknown', status_reason = '',
              ssh_host = $4, ssh_port = $5, ssh_user = $6, ssh_password = $7
          WHERE id = $8
-         RETURNING id, name, agent_url, agent_token, status, ssh_host, ssh_port, ssh_user, ssh_password"
+         RETURNING id, name, agent_url, agent_token, status, status_reason, ssh_host, ssh_port, ssh_user, ssh_password"
     )
     .bind(payload.name)
     .bind(payload.agent_url)
@@ -533,7 +559,7 @@ async fn proxy_container_stats(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let server = sqlx::query_as::<_, GameServerDb>(
-        "SELECT id, name, agent_url, agent_token, status, ssh_host, ssh_port, ssh_user, ssh_password FROM game_servers WHERE id = $1"
+        "SELECT id, name, agent_url, agent_token, status, status_reason, ssh_host, ssh_port, ssh_user, ssh_password FROM game_servers WHERE id = $1"
     )
     .bind(id)
     .fetch_one(&state.pool)
@@ -562,7 +588,7 @@ async fn proxy_container_logs(
     State(state): State<Arc<AppState>>,
 ) -> Result<String, StatusCode> {
     let server = sqlx::query_as::<_, GameServerDb>(
-        "SELECT id, name, agent_url, agent_token, status, ssh_host, ssh_port, ssh_user, ssh_password FROM game_servers WHERE id = $1"
+        "SELECT id, name, agent_url, agent_token, status, status_reason, ssh_host, ssh_port, ssh_user, ssh_password FROM game_servers WHERE id = $1"
     )
     .bind(id)
     .fetch_one(&state.pool)
@@ -597,7 +623,7 @@ async fn proxy_container_action(
     Json(payload): Json<ActionPayload>,
 ) -> Result<StatusCode, StatusCode> {
     let server = sqlx::query_as::<_, GameServerDb>(
-        "SELECT id, name, agent_url, agent_token, status, ssh_host, ssh_port, ssh_user, ssh_password FROM game_servers WHERE id = $1"
+        "SELECT id, name, agent_url, agent_token, status, status_reason, ssh_host, ssh_port, ssh_user, ssh_password FROM game_servers WHERE id = $1"
     )
     .bind(id)
     .fetch_one(&state.pool)
@@ -625,7 +651,7 @@ async fn get_overview(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<ServerOverview>>, StatusCode> {
     let servers = sqlx::query_as::<_, GameServerDb>(
-        "SELECT id, name, agent_url, agent_token, status, ssh_host, ssh_port, ssh_user, ssh_password FROM game_servers ORDER BY id ASC"
+        "SELECT id, name, agent_url, agent_token, status, status_reason, ssh_host, ssh_port, ssh_user, ssh_password FROM game_servers ORDER BY id ASC"
     )
     .fetch_all(&state.pool)
     .await
@@ -660,6 +686,7 @@ async fn get_overview(
             name: s.name,
             agent_url: s.agent_url,
             status: s.status,
+            status_reason: s.status_reason,
             latest_cpu,
             latest_mem,
             container_count,
@@ -688,7 +715,7 @@ async fn handle_ssh_ws(
     State(state): State<Arc<AppState>>,
 ) -> Result<axum::response::Response, StatusCode> {
     let server = sqlx::query_as::<_, GameServerDb>(
-        "SELECT id, name, agent_url, agent_token, status, ssh_host, ssh_port, ssh_user, ssh_password FROM game_servers WHERE id = $1"
+        "SELECT id, name, agent_url, agent_token, status, status_reason, ssh_host, ssh_port, ssh_user, ssh_password FROM game_servers WHERE id = $1"
     )
     .bind(id)
     .fetch_one(&state.pool)
