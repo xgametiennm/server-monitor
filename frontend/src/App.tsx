@@ -652,8 +652,8 @@ export default function App() {
                   <Radio className="w-5 h-5" />
                 </div>
                 <div>
-                  <div className="text-[10px] font-bold text-slate-400 uppercase">Docker Container</div>
-                  <div className="text-lg font-extrabold text-slate-100 mt-0.5">{totalContainers}</div>
+                  <div className="text-[10px] font-bold text-slate-400 uppercase">Docker / Dịch vụ Host</div>
+                  <div className="text-lg font-extrabold text-slate-100 mt-0.5">{totalContainers > 0 ? totalContainers : overviewData.length}</div>
                 </div>
               </div>
 
