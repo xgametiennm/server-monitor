@@ -1025,28 +1025,28 @@ export default function App() {
               </div>
             )}
 
-            {/* Docker Container List Table */}
-            <div className="bg-slate-900 border border-slate-800/60 rounded-2xl p-5 shadow-lg flex-1 min-h-[300px]">
-              <div className="flex items-center gap-2.5 mb-4">
-                <Radio className="w-5 h-5 text-green-500" />
-                <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Docker Containers trên Server</h3>
-              </div>
+            {/* Containers List OR Non-Docker Host Management Dashboard */}
+            {containers.length > 0 ? (
+              <div className="bg-slate-900 border border-slate-800/60 rounded-2xl p-5 shadow-lg flex-1 min-h-[300px]">
+                <div className="flex items-center gap-2.5 mb-4">
+                  <Radio className="w-5 h-5 text-green-500" />
+                  <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Docker Containers trên Server</h3>
+                </div>
 
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-slate-800 text-slate-400 font-semibold">
-                      <th className="py-3 px-4">Tên Container</th>
-                      <th className="py-3 px-4">Docker Image</th>
-                      <th className="py-3 px-4">Trạng thái (State)</th>
-                      <th className="py-3 px-4">Status</th>
-                      <th className="py-3 px-4 text-center">Kết nối (Unique / Active)</th>
-                      <th className="py-3 px-4 text-center"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {containers.length > 0 ? (
-                      containers.map(c => (
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-800 text-slate-400 font-semibold">
+                        <th className="py-3 px-4">Tên Container</th>
+                        <th className="py-3 px-4">Docker Image</th>
+                        <th className="py-3 px-4">Trạng thái (State)</th>
+                        <th className="py-3 px-4">Status</th>
+                        <th className="py-3 px-4 text-center">Kết nối (Unique / Active)</th>
+                        <th className="py-3 px-4 text-center"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {containers.map(c => (
                         <tr key={c.id} className="border-b border-slate-850 hover:bg-slate-950/20 transition-all">
                           <td className="py-3.5 px-4 font-semibold text-slate-200">{c.name}</td>
                           <td className="py-3.5 px-4 font-mono text-slate-400 text-[11px] max-w-[200px] truncate" title={c.image}>
@@ -1085,18 +1085,186 @@ export default function App() {
                             </button>
                           </td>
                         </tr>
-                      ))
-                    ) : (
-                      <tr>
-                        <td colSpan={6} className="py-12 text-center text-slate-500 font-semibold">
-                          {selectedServer.status === 'online' ? 'Không tìm thấy container nào đang chạy trên máy chủ này.' : 'Vui lòng khởi chạy Agent để tải danh sách container.'}
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </div>
+            ) : (
+              /* Non-Docker Host Management Dashboard */
+              <div className="bg-slate-900 border border-slate-800/60 rounded-2xl p-6 shadow-lg space-y-6">
+                {/* Section Banner Header */}
+                <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="p-3 bg-blue-600/10 text-blue-400 rounded-xl">
+                      <Server className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-bold text-slate-100">Bảng Quản trị Hệ thống Host (Non-Docker Server)</h3>
+                        <span className="bg-blue-500/10 border border-blue-500/20 text-blue-400 font-bold px-2 py-0.5 rounded text-[10px] uppercase">
+                          Native Systemd Agent
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        Máy chủ này đang chạy ứng dụng trực tiếp trên Host OS. Agent thu thập trực tiếp thông số phần cứng &amp; TCP Sockets từ Kernel Linux.
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => handleOpenSshTab(selectedServer)}
+                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2.5 rounded-xl text-xs transition-all shadow-lg shadow-blue-500/20 active:scale-95"
+                  >
+                    <Terminal className="w-4 h-4" />
+                    Mở Terminal SSH (Host)
+                  </button>
+                </div>
+
+                {/* Metric Cards Grid for Host */}
+                {(() => {
+                  const sOverview = overviewData.find(s => s.id === selectedServer.id)
+                  return (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                      <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex items-center gap-3">
+                        <div className="p-2.5 bg-blue-500/10 text-blue-400 rounded-lg">
+                          <Cpu className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <div className="text-[10px] font-bold text-slate-400 uppercase">Tải CPU Host</div>
+                          <div className="text-lg font-extrabold text-blue-400 font-mono mt-0.5">
+                            {sOverview?.latest_cpu !== null && sOverview?.latest_cpu !== undefined
+                              ? `${sOverview.latest_cpu.toFixed(1)}%`
+                              : 'N/A'}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex items-center gap-3">
+                        <div className="p-2.5 bg-purple-500/10 text-purple-400 rounded-lg">
+                          <Database className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <div className="text-[10px] font-bold text-slate-400 uppercase">Sử dụng RAM Host</div>
+                          <div className="text-lg font-extrabold text-purple-400 font-mono mt-0.5">
+                            {sOverview?.latest_mem !== null && sOverview?.latest_mem !== undefined
+                              ? `${sOverview.latest_mem.toFixed(1)}%`
+                              : 'N/A'}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex items-center gap-3">
+                        <div className="p-2.5 bg-emerald-500/10 text-emerald-400 rounded-lg">
+                          <Users className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <div className="text-[10px] font-bold text-slate-400 uppercase">Unique Clients (IPs)</div>
+                          <div className="text-lg font-extrabold text-emerald-400 font-mono mt-0.5">
+                            {sOverview?.host_unique_connections ?? 0} IP
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex items-center gap-3">
+                        <div className="p-2.5 bg-cyan-500/10 text-cyan-400 rounded-lg">
+                          <Wifi className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <div className="text-[10px] font-bold text-slate-400 uppercase">Active TCP Sockets</div>
+                          <div className="text-lg font-extrabold text-cyan-400 font-mono mt-0.5">
+                            {sOverview?.host_total_connections ?? 0} conns
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })()}
+
+                {/* Network Ports Monitoring Section */}
+                <div className="bg-slate-950 p-5 rounded-2xl border border-slate-800 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Globe className="w-4 h-4 text-emerald-400" />
+                      <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wider">
+                        Các Cổng Dịch Vụ Hệ Thống Đang Giám Sát (Monitored TCP Ports)
+                      </h4>
+                    </div>
+                    <span className="text-[10px] text-slate-500 font-mono">Linux Kernel /proc/net/tcp</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-xl flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></div>
+                        <div>
+                          <div className="text-xs font-mono font-bold text-slate-200">Port 80 (HTTP)</div>
+                          <div className="text-[10px] text-slate-400">Web App / API Proxy</div>
+                        </div>
+                      </div>
+                      <span className="text-xs font-mono font-bold text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded">
+                        Active
+                      </span>
+                    </div>
+
+                    <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-xl flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></div>
+                        <div>
+                          <div className="text-xs font-mono font-bold text-slate-200">Port 443 (HTTPS)</div>
+                          <div className="text-[10px] text-slate-400">SSL Web Service</div>
+                        </div>
+                      </div>
+                      <span className="text-xs font-mono font-bold text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded">
+                        Active
+                      </span>
+                    </div>
+
+                    <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-xl flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-2.5 h-2.5 rounded-full bg-blue-500"></div>
+                        <div>
+                          <div className="text-xs font-mono font-bold text-slate-200">Port {selectedServer.ssh_port || 22} (SSH)</div>
+                          <div className="text-[10px] text-slate-400">Host Terminal Shell</div>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleOpenSshTab(selectedServer)}
+                        className="text-[10px] font-bold text-blue-400 hover:text-blue-300 bg-blue-500/10 px-2.5 py-1.5 rounded-lg transition-colors flex items-center gap-1"
+                      >
+                        Terminal →
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Helpful Linux Commands Section */}
+                <div className="bg-slate-950 p-5 rounded-2xl border border-slate-800 space-y-3 text-xs">
+                  <h4 className="font-bold text-slate-300 uppercase tracking-wider text-[11px] flex items-center gap-2">
+                    <Terminal className="w-4 h-4 text-blue-400" />
+                    Lệnh Quản Trị Hệ Thống Nhanh (Host Command Helpers)
+                  </h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 font-mono text-[11px]">
+                    <div className="bg-slate-900 border border-slate-850 p-3 rounded-xl">
+                      <span className="text-slate-400 block text-[10px] font-sans font-semibold mb-0.5">Xem log ngầm Agent:</span>
+                      <code className="text-blue-400">sudo journalctl -u game-agent -f</code>
+                    </div>
+                    <div className="bg-slate-900 border border-slate-850 p-3 rounded-xl">
+                      <span className="text-slate-400 block text-[10px] font-sans font-semibold mb-0.5">Kiểm tra các cổng đang lắng nghe:</span>
+                      <code className="text-emerald-400">sudo ss -tulpn</code>
+                    </div>
+                    <div className="bg-slate-900 border border-slate-850 p-3 rounded-xl">
+                      <span className="text-slate-400 block text-[10px] font-sans font-semibold mb-0.5">Kiểm tra trạng thái Agent service:</span>
+                      <code className="text-purple-400">sudo systemctl status game-agent</code>
+                    </div>
+                    <div className="bg-slate-900 border border-slate-850 p-3 rounded-xl">
+                      <span className="text-slate-400 block text-[10px] font-sans font-semibold mb-0.5">Theo dõi tiến trình CPU/RAM:</span>
+                      <code className="text-yellow-400">htop</code>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center border border-dashed border-slate-800 rounded-3xl p-12 text-center space-y-4">
