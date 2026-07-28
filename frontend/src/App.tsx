@@ -34,9 +34,9 @@ import {
   Tooltip,
   ResponsiveContainer
 } from 'recharts'
-import { Terminal as XTerminal } from 'xterm'
+import { Terminal as XTerminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
-import 'xterm/css/xterm.css'
+import '@xterm/xterm/css/xterm.css'
 
 const BACKEND_BASE = ''
 
@@ -1640,7 +1640,6 @@ function SshMultiTabModal({
               key={tab.id}
               tab={tab}
               isActive={tab.id === activeTabId}
-              onClose={() => onCloseTab(tab.id)}
             />
           ))}
         </div>
@@ -1653,11 +1652,9 @@ function SshMultiTabModal({
 function SshSingleTabSession({
   tab,
   isActive,
-  onClose,
 }: {
   tab: SshTab
   isActive: boolean
-  onClose: () => void
 }) {
   const [host, setHost] = useState(tab.sshHost)
   const [port, setPort] = useState(tab.sshPort)
@@ -1723,7 +1720,7 @@ function SshSingleTabSession({
       term.writeln('\r\n\x1b[1;33m[*] Đã ngắt kết nối SSH.\x1b[0m')
     }
 
-    term.onData((data) => {
+    term.onData((data: string) => {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(data)
       }
