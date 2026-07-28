@@ -79,6 +79,8 @@ interface HostHistoryPoint {
   timestamp: string
   host_cpu: number
   host_mem: number
+  total_connections?: number
+  unique_connections?: number
 }
 
 interface PortConnectionStats {
@@ -966,7 +968,7 @@ export default function App() {
 
             {/* Host Resource History charts */}
             {history.length > 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 flex-shrink-0">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-shrink-0">
                 
                 {/* CPU usage history */}
                 <div className="bg-slate-900 border border-slate-800/60 rounded-2xl p-5 shadow-md">
@@ -1013,6 +1015,36 @@ export default function App() {
                         <YAxis stroke="#64748b" fontSize={9} domain={[0, 100]} />
                         <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: 8 }} />
                         <Area type="monotone" dataKey="host_mem" name="RAM Host" stroke="#a855f7" fillOpacity={1} fill="url(#colorMem)" strokeWidth={2} />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                {/* Connection usage history */}
+                <div className="bg-slate-900 border border-slate-800/60 rounded-2xl p-5 shadow-md">
+                  <div className="flex items-center gap-2 mb-4">
+                    <Users className="w-5 h-5 text-emerald-400" />
+                    <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Lịch sử Kết nối User (IPs / Sockets)</h3>
+                  </div>
+                  <div className="h-44 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={history}>
+                        <defs>
+                          <linearGradient id="colorUniqueConns" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#10b981" stopOpacity={0.25}/>
+                            <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                          </linearGradient>
+                          <linearGradient id="colorTotalConns" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.15}/>
+                            <stop offset="95%" stopColor="#06b6d4" stopOpacity={0}/>
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                        <XAxis dataKey="timestamp" stroke="#64748b" fontSize={9} />
+                        <YAxis stroke="#64748b" fontSize={9} allowDecimals={false} />
+                        <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: 8 }} />
+                        <Area type="monotone" dataKey="unique_connections" name="Unique IPs" stroke="#10b981" fillOpacity={1} fill="url(#colorUniqueConns)" strokeWidth={2} />
+                        <Area type="monotone" dataKey="total_connections" name="Total Sockets" stroke="#06b6d4" fillOpacity={1} fill="url(#colorTotalConns)" strokeWidth={1.5} strokeDasharray="4 4" />
                       </AreaChart>
                     </ResponsiveContainer>
                   </div>

@@ -32,6 +32,8 @@ struct MetricDbRow {
     timestamp: chrono::DateTime<chrono::Utc>,
     cpu_percent: f32,
     memory_percent: f32,
+    total_connections: i32,
+    unique_connections: i32,
 }
 
 #[derive(Serialize)]
@@ -87,11 +89,13 @@ struct MetricsResponse {
     containers: Vec<ContainerInfo>,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 struct MetricHistoryPoint {
     timestamp: String,
     host_cpu: f32,
     host_mem: f32,
+    total_connections: usize,
+    unique_connections: usize,
 }
 
 struct MetricsCache {
@@ -206,6 +210,9 @@ async fn init_db(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
     .execute(pool)
     .await?;
 
+    let _ = sqlx::query("ALTER TABLE server_metrics_history ADD COLUMN IF NOT EXISTS total_connections INT DEFAULT 0").execute(pool).await;
+    let _ = sqlx::query("ALTER TABLE server_metrics_history ADD COLUMN IF NOT EXISTS unique_connections INT DEFAULT 0").execute(pool).await;
+
     Ok(())
 }
 
@@ -244,14 +251,24 @@ async fn start_polling_worker(
                                         .execute(&pool_clone)
                                         .await;
 
+                                    // Calculate total & unique connections for history
+                                    let host_total_conns = metrics.host.total_connections.unwrap_or_else(|| {
+                                        metrics.containers.iter().map(|c| c.total_connections.unwrap_or(0)).sum()
+                                    });
+                                    let host_unique_conns = metrics.host.unique_connections.unwrap_or_else(|| {
+                                        metrics.containers.iter().map(|c| c.unique_connections.unwrap_or(0)).sum()
+                                    });
+
                                     // Insert history metrics into database
                                     let _ = sqlx::query(
-                                        "INSERT INTO server_metrics_history (server_id, cpu_percent, memory_percent)
-                                         VALUES ($1, $2, $3)"
+                                        "INSERT INTO server_metrics_history (server_id, cpu_percent, memory_percent, total_connections, unique_connections)
+                                         VALUES ($1, $2, $3, $4, $5)"
                                     )
                                     .bind(server.id)
                                     .bind(metrics.host.cpu_percent)
                                     .bind(metrics.host.memory_percent)
+                                    .bind(host_total_conns as i32)
+                                    .bind(host_unique_conns as i32)
                                     .execute(&pool_clone)
                                     .await;
 
@@ -264,6 +281,8 @@ async fn start_polling_worker(
                                         timestamp: now,
                                         host_cpu: metrics.host.cpu_percent,
                                         host_mem: metrics.host.memory_percent,
+                                        total_connections: host_total_conns,
+                                        unique_connections: host_unique_conns,
                                     });
 
                                     if history.len() > 30 {
@@ -414,7 +433,7 @@ async fn get_server_history(
     if let Some(hours) = filter.hours {
         // Hour-based filter: fetch data from last N hours
         let rows = sqlx::query_as::<_, MetricDbRow>(
-            "SELECT timestamp, cpu_percent, memory_percent 
+            "SELECT timestamp, cpu_percent, memory_percent, total_connections, unique_connections 
              FROM server_metrics_history 
              WHERE server_id = $1 
                AND timestamp >= NOW() - CAST($2 || ' hours' AS INTERVAL)
@@ -435,6 +454,8 @@ async fn get_server_history(
                 timestamp: local_time.format("%H:%M:%S").to_string(),
                 host_cpu: r.cpu_percent,
                 host_mem: r.memory_percent,
+                total_connections: r.total_connections as usize,
+                unique_connections: r.unique_connections as usize,
             }
         }).collect();
 
@@ -445,7 +466,7 @@ async fn get_server_history(
         let end_ts = format!("{} 23:59:59 +0700", end);
 
         let rows = sqlx::query_as::<_, MetricDbRow>(
-            "SELECT timestamp, cpu_percent, memory_percent 
+            "SELECT timestamp, cpu_percent, memory_percent, total_connections, unique_connections 
              FROM server_metrics_history 
              WHERE server_id = $1 
                AND timestamp >= TIMESTAMPTZ ($2) 
@@ -468,6 +489,8 @@ async fn get_server_history(
                 timestamp: local_time.format("%m-%d %H:%M:%S").to_string(),
                 host_cpu: r.cpu_percent,
                 host_mem: r.memory_percent,
+                total_connections: r.total_connections as usize,
+                unique_connections: r.unique_connections as usize,
             }
         }).collect();
 
@@ -475,7 +498,7 @@ async fn get_server_history(
     } else {
         // Return latest 30 points from database
         let rows = sqlx::query_as::<_, MetricDbRow>(
-            "SELECT timestamp, cpu_percent, memory_percent 
+            "SELECT timestamp, cpu_percent, memory_percent, total_connections, unique_connections 
              FROM server_metrics_history 
              WHERE server_id = $1 
              ORDER BY timestamp DESC 
@@ -495,6 +518,8 @@ async fn get_server_history(
                 timestamp: local_time.format("%H:%M:%S").to_string(),
                 host_cpu: r.cpu_percent,
                 host_mem: r.memory_percent,
+                total_connections: r.total_connections as usize,
+                unique_connections: r.unique_connections as usize,
             }
         }).collect();
 
