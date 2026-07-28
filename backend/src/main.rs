@@ -142,7 +142,7 @@ async fn main() {
     }));
 
     let http_client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(15))
         .build()
         .unwrap();
 
@@ -323,7 +323,7 @@ async fn start_polling_worker(
                         }
                         Err(e) => {
                             let reason = if e.is_timeout() {
-                                "Hết thời gian chờ kết nối (Timeout 5s). Kiểm tra IP và Port của Agent.".to_string()
+                                "Hết thời gian chờ kết nối (Timeout 15s). Kiểm tra IP và Port của Agent.".to_string()
                             } else if e.is_connect() {
                                 format!("Không thể kết nối tới {}. Agent chưa chạy hoặc bị Firewall/UFW chặn.", server.agent_url)
                             } else {
@@ -761,15 +761,27 @@ async fn handle_ssh_socket(
 ) {
     let (mut ws_sender, mut ws_receiver) = socket.split();
 
-    let mut cmd = Command::new("sshpass");
-    cmd.arg("-p").arg(&password);
-    cmd.arg("ssh");
-    cmd.arg("-t");
-    cmd.arg("-t");
-    cmd.arg("-o").arg("StrictHostKeyChecking=no");
-    cmd.arg("-o").arg("UserKnownHostsFile=/dev/null");
-    cmd.arg("-p").arg(port.to_string());
-    cmd.arg(format!("{}@{}", user, host));
+    let mut cmd = if password.trim().is_empty() {
+        let mut c = Command::new("ssh");
+        c.arg("-o").arg("RequestTTY=force");
+        c.arg("-o").arg("StrictHostKeyChecking=no");
+        c.arg("-o").arg("UserKnownHostsFile=/dev/null");
+        c.arg("-p").arg(port.to_string());
+        c.arg(format!("{}@{}", user, host));
+        c
+    } else {
+        let mut c = Command::new("sshpass");
+        c.arg("-p").arg(&password);
+        c.arg("ssh");
+        c.arg("-o").arg("RequestTTY=force");
+        c.arg("-o").arg("StrictHostKeyChecking=no");
+        c.arg("-o").arg("UserKnownHostsFile=/dev/null");
+        c.arg("-p").arg(port.to_string());
+        c.arg(format!("{}@{}", user, host));
+        c
+    };
+
+    cmd.env("TERM", "xterm-256color");
     cmd.stdin(std::process::Stdio::piped());
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
