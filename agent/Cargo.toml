@@ -1,0 +1,19 @@
+[package]
+name = "game-server-agent"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.38", features = ["full"] }
+axum = "0.7.5"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bollard = "0.15"
+sysinfo = "0.30"
+chrono = { version = "0.4", features = ["serde"] }
+tower-http = { version = "0.5", features = ["cors"] }
+futures-util = "0.3"
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3.9", features = ["winerror", "fileapi", "handleapi", "winbase"] }
+

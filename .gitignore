@@ -1,0 +1,19 @@
+# Rust build targets
+**/target/
+**/*.rs.bk
+
+# Node / Frontend dependencies & build output
+**/node_modules/
+**/dist/
+.vite/
+
+# Environment files & local configs
+.env
+*.env
+*.log
+
+# IDE & OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
