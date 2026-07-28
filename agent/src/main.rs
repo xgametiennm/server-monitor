@@ -19,7 +19,7 @@ use chrono::{DateTime, Utc};
 use sysinfo::System;
 
 struct AppState {
-    docker: Docker,
+    docker: Option<Docker>,
 }
 
 struct AuthToken;
@@ -252,12 +252,24 @@ async fn main() {
     let port = env::var("PORT").unwrap_or_else(|_| "9100".to_string());
     let addr = format!("0.0.0.0:{}", port);
 
-    // Initialize Docker client
+    // Initialize Docker client (optional - agent works without Docker)
     let docker = match Docker::connect_with_local_defaults() {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("Failed to connect to Docker daemon: {}", e);
-            std::process::exit(1);
+        Ok(d) => {
+            // Verify Docker is actually reachable
+            match d.ping().await {
+                Ok(_) => {
+                    println!("[+] Docker daemon detected. Container monitoring enabled.");
+                    Some(d)
+                }
+                Err(_) => {
+                    println!("[!] Docker daemon not reachable. Running in system-only mode.");
+                    None
+                }
+            }
+        }
+        Err(_) => {
+            println!("[!] Docker not installed. Running in system-only mode (CPU/RAM/Network/TCP).");
+            None
         }
     };
 
@@ -314,43 +326,46 @@ async fn get_metrics(
         uptime_seconds,
     };
 
-    // 2. Get Docker Containers list
-    let list_options = ListContainersOptions::<String> {
-        all: true,
-        ..Default::default()
-    };
+    // 2. Get Docker Containers list (if Docker is available)
+    let containers = if let Some(docker) = &state.docker {
+        let list_options = ListContainersOptions::<String> {
+            all: true,
+            ..Default::default()
+        };
 
-    let containers_raw = state
-        .docker
-        .list_containers(Some(list_options))
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let containers_raw = docker
+            .list_containers(Some(list_options))
+            .await
+            .unwrap_or_default();
 
-    let containers = containers_raw
-        .into_iter()
-        .map(|c| {
-            let mut host_ports = Vec::new();
-            if let Some(ports) = &c.ports {
-                for p in ports {
-                    if let Some(pub_port) = p.public_port {
-                        if !host_ports.contains(&pub_port) {
-                            host_ports.push(pub_port);
+        containers_raw
+            .into_iter()
+            .map(|c| {
+                let mut host_ports = Vec::new();
+                if let Some(ports) = &c.ports {
+                    for p in ports {
+                        if let Some(pub_port) = p.public_port {
+                            if !host_ports.contains(&pub_port) {
+                                host_ports.push(pub_port);
+                            }
                         }
                     }
                 }
-            }
-            let conn_metrics = get_unique_connections_for_ports(&host_ports);
-            ContainerInfo {
-                id: c.id.unwrap_or_default(),
-                name: c.names.unwrap_or_default().first().cloned().unwrap_or_else(|| "unknown".to_string()),
-                image: c.image.unwrap_or_default(),
-                status: c.status.unwrap_or_default(),
-                state: c.state.unwrap_or_default(),
-                total_connections: conn_metrics.total_connections,
-                unique_connections: conn_metrics.unique_connections,
-            }
-        })
-        .collect();
+                let conn_metrics = get_unique_connections_for_ports(&host_ports);
+                ContainerInfo {
+                    id: c.id.unwrap_or_default(),
+                    name: c.names.unwrap_or_default().first().cloned().unwrap_or_else(|| "unknown".to_string()),
+                    image: c.image.unwrap_or_default(),
+                    status: c.status.unwrap_or_default(),
+                    state: c.state.unwrap_or_default(),
+                    total_connections: conn_metrics.total_connections,
+                    unique_connections: conn_metrics.unique_connections,
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
 
     Ok(Json(MetricsResponse { host, containers }))
 }
@@ -360,9 +375,10 @@ async fn get_container_stats(
     Path(container_id): Path<String>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<ContainerStats>, StatusCode> {
+    let docker = state.docker.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+
     // 1. Get container details for ports, IP, Uptime
-    let inspect = state
-        .docker
+    let inspect = docker
         .inspect_container(&container_id, None)
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
@@ -429,7 +445,7 @@ async fn get_container_stats(
 
     // 2. Fetch stats stream (get single snapshot by setting stream = false)
     let stats_options = StatsOptions { stream: false, one_shot: true };
-    let mut stats_stream = state.docker.stats(&container_id, Some(stats_options));
+    let mut stats_stream = docker.stats(&container_id, Some(stats_options));
 
     let mut cpu_percent = 0.0;
     let mut memory_used_bytes = 0;
@@ -510,6 +526,8 @@ async fn get_container_logs(
     Path(container_id): Path<String>,
     State(state): State<Arc<AppState>>,
 ) -> Result<String, StatusCode> {
+    let docker = state.docker.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+
     let logs_options = LogsOptions::<String> {
         stdout: true,
         stderr: true,
@@ -517,7 +535,7 @@ async fn get_container_logs(
         ..Default::default()
     };
 
-    let mut log_stream = state.docker.logs(&container_id, Some(logs_options));
+    let mut log_stream = docker.logs(&container_id, Some(logs_options));
     let mut logs = Vec::new();
 
     while let Some(Ok(log_output)) = log_stream.next().await {
@@ -541,26 +559,25 @@ async fn handle_container_action(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<ActionPayload>,
 ) -> Result<StatusCode, StatusCode> {
+    let docker = state.docker.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+
     match payload.action.as_str() {
         "restart" => {
-            state
-                .docker
+            docker
                 .restart_container(&container_id, None)
                 .await
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
             Ok(StatusCode::OK)
         }
         "stop" => {
-            state
-                .docker
+            docker
                 .stop_container(&container_id, None)
                 .await
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
             Ok(StatusCode::OK)
         }
         "start" => {
-            state
-                .docker
+            docker
                 .start_container(&container_id, None::<bollard::container::StartContainerOptions<String>>)
                 .await
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;

@@ -45,13 +45,23 @@ BINARY_PATH="$(pwd)/target/release/game-server-agent"
 # 4. Create systemd Service file
 echo -e "${BLUE}[3/4] Cấu hình tự động chạy ngầm (Systemd Service)...${NC}"
 
+# Detect if Docker is installed on this system
+DOCKER_DEPS=""
+if command -v docker &> /dev/null; then
+    DOCKER_DEPS="After=network.target docker.service
+Wants=docker.service"
+    echo -e "${GREEN}    ✓ Phát hiện Docker → Agent sẽ theo dõi Docker Containers.${NC}"
+else
+    DOCKER_DEPS="After=network.target"
+    echo -e "${BLUE}    ℹ Không có Docker → Agent chỉ thu thập thông số hệ thống (CPU/RAM/Disk/Network/TCP).${NC}"
+fi
+
 SERVICE_FILE="/etc/systemd/system/game-agent.service"
 
 sudo bash -c "cat > $SERVICE_FILE" <<EOL
 [Unit]
 Description=Game Server Monitoring Agent
-After=network.target docker.service
-Requires=docker.service
+$DOCKER_DEPS
 
 [Service]
 Type=simple
