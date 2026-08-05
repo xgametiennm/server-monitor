@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react'
+import React, { useEffect, useState, useRef, useContext, createContext, useMemo } from 'react'
 import axios from 'axios'
 import {
   Server,
@@ -22,7 +22,11 @@ import {
   ServerCrash,
   CalendarDays,
   Users,
-  Wifi
+  Wifi,
+  Sun,
+  Moon,
+  Loader2,
+  ChevronRight
 } from 'lucide-react'
 import {
   AreaChart,
@@ -38,6 +42,56 @@ import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 
 const BACKEND_BASE = ''
+
+/* ---------------------------------------------------------------------------
+ * Theme (light / dark) — default dark
+ * ------------------------------------------------------------------------ */
+
+type ThemeMode = 'light' | 'dark'
+
+const ThemeContext = createContext<{ theme: ThemeMode; toggle: () => void }>({
+  theme: 'dark',
+  toggle: () => {}
+})
+
+const useTheme = () => useContext(ThemeContext)
+
+const readStoredTheme = (): ThemeMode => {
+  try {
+    const saved = localStorage.getItem('gsm-theme')
+    if (saved === 'light' || saved === 'dark') return saved
+  } catch {
+    /* ignore */
+  }
+  return 'dark'
+}
+
+/* Shared surface / control recipes ---------------------------------------- */
+
+const CARD = 'rounded-ios-lg bg-surface border border-line shadow-e2'
+const INSET = 'rounded-ios bg-surface-2 border border-line'
+const FIELD =
+  'w-full bg-surface-2 border border-line rounded-ios-sm px-3.5 py-2.5 text-ink placeholder:text-ink-3 ' +
+  'focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/25 transition-all'
+const BTN_PRIMARY =
+  'inline-flex items-center justify-center gap-2 bg-accent text-accent-ink font-semibold rounded-ios-sm ' +
+  'px-4 py-2.5 shadow-e1 transition-all hover:opacity-90 active:scale-[0.97] disabled:opacity-50'
+const BTN_QUIET =
+  'inline-flex items-center justify-center gap-2 bg-surface-2 border border-line text-ink font-semibold ' +
+  'rounded-ios-sm px-4 py-2.5 transition-all hover:bg-surface-3 active:scale-[0.97]'
+const ICON_BTN =
+  'inline-flex items-center justify-center p-2 rounded-ios-sm bg-surface-2 border border-line text-ink-2 ' +
+  'transition-all hover:text-ink hover:bg-surface-3 active:scale-95'
+/* Compact control pair — identical 34px box so text buttons and icon buttons
+   line up perfectly when sitting side by side in a toolbar. */
+const BTN_QUIET_SM =
+  'inline-flex items-center justify-center h-[34px] px-3 bg-surface-2 border border-line text-ink ' +
+  'text-[13px] font-semibold rounded-ios-sm transition-all hover:bg-surface-3 active:scale-[0.97]'
+const ICON_BTN_SM =
+  'inline-flex items-center justify-center h-[34px] w-[34px] rounded-ios-sm bg-surface-2 border border-line ' +
+  'text-ink-2 transition-all hover:text-ink hover:bg-surface-3 active:scale-95'
+const LABEL = 'text-[11px] font-semibold uppercase tracking-wide text-ink-2'
+const SECTION_TITLE = 'text-[13px] font-semibold text-ink'
 
 interface GameServer {
   id: number
@@ -121,12 +175,99 @@ interface SshTab {
   sshPassword?: string
 }
 
+/* Small presentational primitives ---------------------------------------- */
+
+function StatusPill({ online, children }: { online: boolean; children: React.ReactNode }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold ${
+        online ? 'bg-ok/12 text-ok' : 'bg-bad/12 text-bad'
+      }`}
+    >
+      <span className={`w-1.5 h-1.5 rounded-full ${online ? 'bg-ok' : 'bg-bad'}`} />
+      {children}
+    </span>
+  )
+}
+
+function Meter({ value, tone }: { value: number; tone: string }) {
+  return (
+    <div className="w-full bg-surface-3 rounded-full h-1.5 overflow-hidden">
+      <div
+        className="h-1.5 rounded-full transition-all duration-500"
+        style={{ width: `${Math.min(Math.max(value, 0), 100)}%`, backgroundColor: tone }}
+      />
+    </div>
+  )
+}
+
+function StatCard({
+  icon,
+  label,
+  value,
+  tone,
+  className = ''
+}: {
+  icon: React.ReactNode
+  label: string
+  value: React.ReactNode
+  tone: string
+  className?: string
+}) {
+  return (
+    <div className={`${CARD} p-4 flex items-center gap-3.5 ${className}`}>
+      <div
+        className="p-2.5 rounded-ios flex items-center justify-center"
+        style={{ backgroundColor: `color-mix(in srgb, ${tone} 12%, transparent)`, color: tone }}
+      >
+        {icon}
+      </div>
+      <div className="min-w-0">
+        <div className="text-[11px] font-medium text-ink-2 truncate">{label}</div>
+        <div className="text-[19px] font-semibold text-ink tracking-tight mt-0.5 tabular-nums">{value}</div>
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
+  /* Theme ---------------------------------------------------------------- */
+  const [theme, setTheme] = useState<ThemeMode>(readStoredTheme)
+
+  useEffect(() => {
+    const root = document.documentElement
+    root.classList.toggle('dark', theme === 'dark')
+    try {
+      localStorage.setItem('gsm-theme', theme)
+    } catch {
+      /* ignore */
+    }
+  }, [theme])
+
+  const themeCtx = useMemo(
+    () => ({ theme, toggle: () => setTheme(t => (t === 'dark' ? 'light' : 'dark')) }),
+    [theme]
+  )
+
+  const isDark = theme === 'dark'
+  const chart = isDark
+    ? { accent: '#0a84ff', alt: '#bf5af2', ok: '#30d158', info: '#64d2ff', grid: '#303032', axis: '#78787e', tipBg: '#1c1c1e', tipLine: '#3a3a3c', tipInk: '#f2f2f7' }
+    : { accent: '#007aff', alt: '#7d3ac1', ok: '#248a3d', info: '#0071a4', grid: '#e3e3e8', axis: '#9a9aa0', tipBg: '#ffffff', tipLine: '#e3e3e8', tipInk: '#1c1c1e' }
+
+  const tooltipStyle = {
+    backgroundColor: chart.tipBg,
+    borderColor: chart.tipLine,
+    borderRadius: 12,
+    fontSize: 12,
+    color: chart.tipInk,
+    boxShadow: '0 10px 30px -14px rgba(0,0,0,.4)'
+  }
+
   const [servers, setServers] = useState<GameServer[]>([])
   const [selectedServer, setSelectedServer] = useState<GameServer | null>(null)
   const [containers, setContainers] = useState<ContainerInfo[]>([])
   const [history, setHistory] = useState<HostHistoryPoint[]>([])
-  
+
   // Navigation
   const [showOverview, setShowOverview] = useState(true)
   const [overviewData, setOverviewData] = useState<ServerOverview[]>([])
@@ -167,7 +308,11 @@ export default function App() {
   const [endDate, setEndDate] = useState(getTodayDate())
   const [activePreset, setActivePreset] = useState<string>('today')
   const [isFiltering, setIsFiltering] = useState(false)
-  
+  // Drives the visible "đang tải" state on the history filter bar + charts.
+  const [historyLoading, setHistoryLoading] = useState(false)
+  // Manual refresh state for the container table (auto-poll is every 5s).
+  const [containersRefreshing, setContainersRefreshing] = useState(false)
+
   // Add Server States
   const [showAddModal, setShowAddModal] = useState(false)
   const [newName, setNewName] = useState('')
@@ -180,14 +325,14 @@ export default function App() {
   const [editName, setEditName] = useState('')
   const [editUrl, setEditUrl] = useState('')
   const [editToken, setEditToken] = useState('')
-  
+
   // Monitoring details modal
   const [selectedContainer, setSelectedContainer] = useState<ContainerInfo | null>(null)
   const [containerStats, setContainerStats] = useState<ContainerStats | null>(null)
   const [containerLogs, setContainerLogs] = useState<string>('')
   const [isPerformingAction, setIsPerformingAction] = useState(false)
   const [logFilter, setLogFilter] = useState('')
-  
+
   // Multi-Tab SSH States
   const [sshTabs, setSshTabs] = useState<SshTab[]>([])
   const [activeSshTabId, setActiveSshTabId] = useState<string | null>(null)
@@ -220,7 +365,7 @@ export default function App() {
       return filtered
     })
   }
-  
+
   const terminalEndRef = useRef<HTMLDivElement>(null)
 
   // Axios helper
@@ -231,7 +376,7 @@ export default function App() {
     try {
       const res = await api.get('/api/servers')
       setServers(res.data)
-      
+
       if (selectedServer) {
         const latestSelected = res.data.find((s: GameServer) => s.id === selectedServer.id)
         if (latestSelected) {
@@ -264,7 +409,7 @@ export default function App() {
     try {
       const containersRes = await api.get(`/api/servers/${server.id}/containers`)
       setContainers(containersRes.data)
-      
+
       // Fetch default history (latest 30 points)
       const historyRes = await api.get(`/api/servers/${server.id}/history`)
       setHistory(historyRes.data)
@@ -278,7 +423,7 @@ export default function App() {
     try {
       const statsRes = await api.get(`/api/servers/${server.id}/containers/${container.id}/stats`)
       setContainerStats(statsRes.data)
-      
+
       const logsRes = await api.get(`/api/servers/${server.id}/containers/${container.id}/logs`)
       setContainerLogs(logsRes.data)
     } catch (e) {
@@ -398,6 +543,7 @@ export default function App() {
     if (e) e.preventDefault()
     if (!selectedServer || !startDate || !endDate) return
     setIsFiltering(true)
+    setHistoryLoading(true)
     try {
       const res = await api.get(`/api/servers/${selectedServer.id}/history`, {
         params: { start_date: startDate, end_date: endDate }
@@ -406,6 +552,8 @@ export default function App() {
     } catch (e) {
       console.error(e)
       alert('Không thể tải dữ liệu lịch sử theo khoảng ngày đã chọn!')
+    } finally {
+      setHistoryLoading(false)
     }
   }
 
@@ -420,11 +568,17 @@ export default function App() {
     if (days === 0) {
       // "Hôm nay" = live mode
       setIsFiltering(false)
-      fetchServerDetails(selectedServer)
+      setHistoryLoading(true)
+      try {
+        await fetchServerDetails(selectedServer)
+      } finally {
+        setHistoryLoading(false)
+      }
       return
     }
 
     setIsFiltering(true)
+    setHistoryLoading(true)
     try {
       const res = await api.get(`/api/servers/${selectedServer.id}/history`, {
         params: { start_date: start, end_date: end }
@@ -432,6 +586,8 @@ export default function App() {
       setHistory(res.data)
     } catch (e) {
       console.error(e)
+    } finally {
+      setHistoryLoading(false)
     }
   }
 
@@ -439,6 +595,7 @@ export default function App() {
     if (!selectedServer) return
     setActivePreset(presetKey)
     setIsFiltering(true)
+    setHistoryLoading(true)
     try {
       const res = await api.get(`/api/servers/${selectedServer.id}/history`, {
         params: { hours }
@@ -446,16 +603,39 @@ export default function App() {
       setHistory(res.data)
     } catch (e) {
       console.error(e)
+    } finally {
+      setHistoryLoading(false)
     }
   }
 
-  const handleClearHistoryFilter = () => {
+  const handleClearHistoryFilter = async () => {
     setStartDate(getTodayDate())
     setEndDate(getTodayDate())
     setIsFiltering(false)
     setActivePreset('today')
     if (selectedServer) {
-      fetchServerDetails(selectedServer)
+      setHistoryLoading(true)
+      try {
+        await fetchServerDetails(selectedServer)
+      } finally {
+        setHistoryLoading(false)
+      }
+    }
+  }
+
+  // Manual container refresh — re-reads the container list (and host status)
+  // without touching the history filter currently applied to the charts.
+  const handleRefreshContainers = async () => {
+    if (!selectedServer || containersRefreshing) return
+    setContainersRefreshing(true)
+    try {
+      const res = await api.get(`/api/servers/${selectedServer.id}/containers`)
+      setContainers(res.data)
+      await fetchServers()
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setContainersRefreshing(false)
     }
   }
 
@@ -489,216 +669,254 @@ export default function App() {
       .join('\n')
   }
 
+  /* Y-axis auto-scaling ---------------------------------------------------
+   * Fixed domains ([0,100] for %, auto for connections) waste most of the
+   * plot area when the real values sit in a narrow band. Instead of only
+   * handing Recharts an upper bound (its default tickCount then divides the
+   * range into fractions that `allowDecimals={false}` rounds into an uneven,
+   * duplicate-collapsing set like 0/2/4/5), we compute a whole-number step
+   * and emit the tick array explicitly so every gap is identical.
+   * Floor stays at 0 so the filled area keeps its baseline meaning.       */
+  const niceAxis = (max: number, cap?: number) => {
+    // Aim for 4-6 gaps; step must be a whole number so ticks never repeat.
+    const target = 5
+    const raw = Math.max(max, 1) / target
+    const exp = Math.floor(Math.log10(raw))
+    const pow = Math.max(1, Math.pow(10, exp))
+    const frac = raw / pow
+    const mult = frac <= 1 ? 1 : frac <= 2 ? 2 : frac <= 5 ? 5 : 10
+    const step = Math.max(1, mult * pow)
+
+    let top = Math.ceil(Math.max(max, 1) / step) * step
+    if (cap !== undefined && top > cap) top = cap
+
+    const ticks: number[] = []
+    for (let t = 0; t <= top + 1e-9; t += step) ticks.push(Math.round(t))
+    // Cap can land between steps (e.g. 100 with step 30) — keep the endpoint.
+    if (ticks[ticks.length - 1] !== top) ticks.push(top)
+
+    return { domain: [0, top] as [number, number], ticks }
+  }
+
+  const maxOf = (keys: (keyof HostHistoryPoint)[]) =>
+    history.reduce(
+      (acc, p) => keys.reduce((m, k) => Math.max(m, Number(p[k]) || 0), acc),
+      0
+    )
+
+  // 15% headroom so the peak never touches the top edge of the plot.
+  const cpuAxis = useMemo(() => niceAxis(maxOf(['host_cpu']) * 1.15, 100), [history])
+  const memAxis = useMemo(() => niceAxis(maxOf(['host_mem']) * 1.15, 100), [history])
+  const connAxis = useMemo(
+    () => niceAxis(maxOf(['unique_connections', 'total_connections']) * 1.15),
+    [history]
+  )
+
   // Calculate Overview Aggregate Metrics
   const totalServers = overviewData.length
   const onlineServers = overviewData.filter(s => s.status === 'online').length
   const offlineServers = totalServers - onlineServers
   const totalContainers = overviewData.reduce((acc, s) => acc + s.container_count, 0)
 
+  // Segmented control pill. The active state uses the solid accent fill so it
+  // reads clearly in both themes (the previous surface+shadow variant was faint).
+  const segBtn = (active: boolean) =>
+    `h-[28px] px-3 rounded-ios-xs text-[12px] font-semibold transition-all active:scale-[0.97] ${
+      active
+        ? 'bg-accent text-accent-ink shadow-e1'
+        : 'text-ink-2 hover:text-ink hover:bg-surface-3'
+    }`
+
   return (
-    <div className="flex h-screen w-screen bg-slate-950 text-slate-100 overflow-hidden font-sans">
-      
+    <ThemeContext.Provider value={themeCtx}>
+    <div className="flex h-screen w-screen bg-canvas text-ink overflow-hidden font-sans antialiased">
+
       {/* 1. Left Sidebar */}
-      <aside className="w-80 bg-slate-900 border-r border-slate-800/80 flex flex-col overflow-hidden">
-        
+      <aside className="w-[288px] flex-shrink-0 material border-r border-line flex flex-col overflow-hidden">
+
         {/* Logo and title */}
-        <div className="p-6 border-b border-slate-800/80 bg-slate-900/60 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/10">
-              <Activity className="w-5.5 h-5.5 text-white animate-pulse" />
+        <div className="px-5 py-4 border-b border-line flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 bg-accent rounded-ios flex items-center justify-center shadow-e1 flex-shrink-0">
+              <Activity className="w-[18px] h-[18px] text-accent-ink" />
             </div>
-            <div>
-              <h1 className="text-sm font-extrabold tracking-wider text-slate-100">GAME EXPORTER</h1>
-              <p className="text-[10px] text-slate-400 font-semibold uppercase">Management Console</p>
+            <div className="min-w-0">
+              <h1 className="text-[14px] font-semibold tracking-tight text-ink truncate">Game Exporter</h1>
+              <p className="text-[11px] text-ink-2 truncate">Management Console</p>
             </div>
           </div>
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="p-1.5 bg-slate-800 hover:bg-blue-600 text-slate-200 hover:text-white rounded-lg transition-all active:scale-90"
-            title="Thêm Server"
-          >
-            <Plus className="w-4 h-4" />
-          </button>
+
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            <button
+              onClick={themeCtx.toggle}
+              className={ICON_BTN}
+              title={isDark ? 'Chuyển sang giao diện Sáng' : 'Chuyển sang giao diện Tối'}
+              aria-label="Đổi giao diện Sáng/Tối"
+            >
+              {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            </button>
+            <button
+              onClick={() => setShowAddModal(true)}
+              className={ICON_BTN}
+              title="Thêm Server"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         {/* System Overview Selector */}
-        <div className="px-4 pt-4">
+        <div className="px-3 pt-3">
           <button
             onClick={() => {
               setShowOverview(true)
               setSelectedServer(null)
             }}
-            className={`w-full flex items-center gap-3 p-3.5 rounded-xl border text-xs font-semibold tracking-wide transition-all ${
+            className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-ios text-[13px] font-semibold transition-all ${
               showOverview
-                ? 'bg-blue-600/10 border-blue-500 text-blue-400'
-                : 'bg-slate-950/20 border-slate-800/50 hover:bg-slate-800/20 text-slate-300'
+                ? 'bg-accent/12 text-accent'
+                : 'text-ink-2 hover:bg-surface-2 hover:text-ink'
             }`}
           >
-            <LayoutDashboard className="w-4.5 h-4.5" />
+            <LayoutDashboard className="w-[18px] h-[18px]" />
             Tổng quan hệ thống
           </button>
         </div>
 
         {/* Server List */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
-          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-2">Danh sách Game Server</div>
-          {servers.map(s => (
-            <div
-              key={s.id}
-              onClick={() => {
-                setSelectedServer(s)
-                setShowOverview(false)
-              }}
-              className={`w-full flex items-center justify-between p-3.5 rounded-xl border cursor-pointer transition-all group ${
-                !showOverview && selectedServer?.id === s.id
-                  ? 'bg-blue-600/10 border-blue-500 text-blue-400'
-                  : 'bg-slate-950/40 border-slate-850 hover:bg-slate-800/30 text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <div className="flex items-center gap-3 min-w-0">
-                <Server className={`w-5 h-5 ${!showOverview && selectedServer?.id === s.id ? 'text-blue-400' : 'text-slate-500'}`} />
-                <div className="text-left min-w-0">
-                  <div className="text-xs font-semibold text-slate-200 truncate">{s.name}</div>
-                  <div className="text-[10px] text-slate-500 truncate">{s.agent_url}</div>
+        <div className="flex-1 overflow-y-auto px-3 pb-4 pt-4 space-y-1.5">
+          <div className={`${LABEL} px-2 pb-1`}>Danh sách Game Server</div>
+          {servers.map(s => {
+            const active = !showOverview && selectedServer?.id === s.id
+            return (
+              <div
+                key={s.id}
+                onClick={() => {
+                  setSelectedServer(s)
+                  setShowOverview(false)
+                }}
+                className={`w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-ios cursor-pointer transition-all group ${
+                  active ? 'bg-accent/12' : 'hover:bg-surface-2'
+                }`}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <Server className={`w-[18px] h-[18px] flex-shrink-0 ${active ? 'text-accent' : 'text-ink-3'}`} />
+                  <div className="text-left min-w-0">
+                    <div className={`text-[13px] font-semibold truncate ${active ? 'text-accent' : 'text-ink'}`}>{s.name}</div>
+                    <div className="text-[11px] text-ink-3 truncate font-mono">{s.agent_url}</div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  <span
+                    className={`w-2 h-2 rounded-full group-hover:hidden ${s.status === 'online' ? 'bg-ok' : 'bg-bad'}`}
+                    title={s.status === 'online' ? 'Online' : 'Offline'}
+                  />
+                  <div className="hidden group-hover:flex items-center gap-0.5">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setEditingServer(s)
+                        setEditName(s.name)
+                        setEditUrl(s.agent_url)
+                        setEditToken(s.agent_token)
+                        setShowEditModal(true)
+                      }}
+                      className="p-1.5 rounded-ios-xs text-ink-3 hover:text-accent hover:bg-surface-3 transition-all"
+                      title="Sửa thông số"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleDeleteServer(s.id)
+                      }}
+                      className="p-1.5 rounded-ios-xs text-ink-3 hover:text-bad hover:bg-surface-3 transition-all"
+                      title="Xóa Server"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               </div>
-              
-              <div className="flex items-center gap-2">
-                <span className={`w-2.5 h-2.5 rounded-full ${
-                  s.status === 'online' ? 'bg-green-500 animate-ping' : 'bg-red-500'
-                }`} />
-                
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setEditingServer(s)
-                      setEditName(s.name)
-                      setEditUrl(s.agent_url)
-                      setEditToken(s.agent_token)
-                      setShowEditModal(true)
-                    }}
-                    className="opacity-0 group-hover:opacity-100 p-1 hover:text-blue-400 hover:bg-slate-800/40 rounded transition-all"
-                    title="Sửa thông số"
-                  >
-                    <Edit2 className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      handleDeleteServer(s.id)
-                    }}
-                    className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-500 hover:bg-slate-800/40 rounded transition-all"
-                    title="Xóa Server"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       </aside>
 
       {/* 2. Main Dashboard Area */}
-      <main className="flex-1 flex flex-col overflow-hidden bg-slate-950 p-6 space-y-6">
-        
+      <main className="flex-1 flex flex-col overflow-hidden bg-canvas p-6 space-y-5">
+
         {showOverview ? (
           /* SYSTEM OVERVIEW SCREEN */
-          <div className="flex-1 flex flex-col overflow-y-auto space-y-6">
-            
+          <div className="flex-1 flex flex-col overflow-y-auto space-y-5 pr-1">
+
             {/* Overview Header */}
             <div>
-              <h2 className="text-xl font-bold tracking-tight">Tổng quan hoạt động hệ thống</h2>
-              <p className="text-xs text-slate-400 mt-1">Quản lý và giám sát trạng thái thời gian thực của tất cả các cụm game server.</p>
+              <h2 className="text-[22px] font-semibold tracking-tight text-ink">Tổng quan hoạt động hệ thống</h2>
+              <p className="text-[13px] text-ink-2 mt-1">Quản lý và giám sát trạng thái thời gian thực của tất cả các cụm game server.</p>
             </div>
 
             {/* Aggregated Stats Cards */}
             <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-              
-              {/* Total registered */}
-              <div className="bg-slate-900 border border-slate-800/80 p-4 rounded-2xl flex items-center gap-3.5 shadow-md">
-                <div className="p-2.5 bg-blue-600/10 text-blue-400 rounded-xl">
-                  <Server className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="text-[10px] font-bold text-slate-400 uppercase">Tổng số Server</div>
-                  <div className="text-lg font-extrabold text-slate-100 mt-0.5">{totalServers}</div>
-                </div>
-              </div>
-
-              {/* Online */}
-              <div className="bg-slate-900 border border-slate-800/80 p-4 rounded-2xl flex items-center gap-3.5 shadow-md">
-                <div className="p-2.5 bg-green-600/10 text-green-400 rounded-xl">
-                  <Activity className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="text-[10px] font-bold text-slate-400 uppercase">Server Đang Chạy</div>
-                  <div className="text-lg font-extrabold text-slate-100 mt-0.5">{onlineServers}</div>
-                </div>
-              </div>
-
-              {/* Offline */}
-              <div className="bg-slate-900 border border-slate-800/80 p-4 rounded-2xl flex items-center gap-3.5 shadow-md">
-                <div className="p-2.5 bg-red-600/10 text-red-400 rounded-xl">
-                  <ServerCrash className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="text-[10px] font-bold text-slate-400 uppercase">Server Ngoại Tuyến</div>
-                  <div className="text-lg font-extrabold text-slate-100 mt-0.5">{offlineServers}</div>
-                </div>
-              </div>
-
-              {/* Total Containers */}
-              <div className="bg-slate-900 border border-slate-800/80 p-4 rounded-2xl flex items-center gap-3.5 shadow-md">
-                <div className="p-2.5 bg-purple-600/10 text-purple-400 rounded-xl">
-                  <Radio className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="text-[10px] font-bold text-slate-400 uppercase">Docker / Dịch vụ Host</div>
-                  <div className="text-lg font-extrabold text-slate-100 mt-0.5">{totalContainers > 0 ? totalContainers : overviewData.length}</div>
-                </div>
-              </div>
-
-              {/* Unique Clients */}
-              <div className="bg-slate-900 border border-slate-800/80 p-4 rounded-2xl flex items-center gap-3.5 shadow-md col-span-2 lg:col-span-1">
-                <div className="p-2.5 bg-emerald-600/10 text-emerald-400 rounded-xl">
-                  <Users className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="text-[10px] font-bold text-slate-400 uppercase">Unique Clients (IPs)</div>
-                  <div className="text-lg font-extrabold text-emerald-400 mt-0.5 font-mono">
-                    {containers.length > 0
-                      ? containers.reduce((acc, c) => acc + (c.unique_connections || 0), 0)
-                      : overviewData.reduce((acc, s) => acc + (s.host_unique_connections || 0), 0)}
-                  </div>
-                </div>
-              </div>
-
+              <StatCard
+                icon={<Server className="w-[18px] h-[18px]" />}
+                label="Tổng số Server"
+                value={totalServers}
+                tone="var(--c-accent)"
+              />
+              <StatCard
+                icon={<Activity className="w-[18px] h-[18px]" />}
+                label="Server đang chạy"
+                value={onlineServers}
+                tone="var(--c-ok)"
+              />
+              <StatCard
+                icon={<ServerCrash className="w-[18px] h-[18px]" />}
+                label="Server ngoại tuyến"
+                value={offlineServers}
+                tone="var(--c-bad)"
+              />
+              <StatCard
+                icon={<Radio className="w-[18px] h-[18px]" />}
+                label="Docker / Dịch vụ Host"
+                value={totalContainers > 0 ? totalContainers : overviewData.length}
+                tone="var(--c-alt)"
+              />
+              <StatCard
+                icon={<Users className="w-[18px] h-[18px]" />}
+                label="Unique Clients (IPs)"
+                tone="var(--c-ok)"
+                className="col-span-2 lg:col-span-1"
+                value={
+                  containers.length > 0
+                    ? containers.reduce((acc, c) => acc + (c.unique_connections || 0), 0)
+                    : overviewData.reduce((acc, s) => acc + (s.host_unique_connections || 0), 0)
+                }
+              />
             </div>
 
             {/* Servers Cards Grid */}
-            <div className="space-y-4">
-              <div className="text-xs font-bold text-slate-300 uppercase tracking-wider px-1">Trạng thái chi tiết từng cụm</div>
-              
+            <div className="space-y-3">
+              <div className={`${LABEL} px-1`}>Trạng thái chi tiết từng cụm</div>
+
               {overviewData.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                   {overviewData.map(s => (
                     <div
                       key={s.id}
-                      className="bg-slate-900 border border-slate-800/80 hover:border-slate-700 rounded-2xl p-5 shadow-lg flex flex-col justify-between space-y-4 transition-all duration-300 hover:-translate-y-0.5"
+                      className={`${CARD} p-5 flex flex-col justify-between gap-4 transition-all duration-300 hover:shadow-e3 hover:-translate-y-0.5`}
                     >
                       {/* Server Card Header */}
-                      <div className="flex justify-between items-start">
+                      <div className="flex justify-between items-start gap-3">
                         <div className="min-w-0">
-                          <h4 className="text-sm font-bold text-slate-100 truncate">{s.name}</h4>
-                          <span className="text-[10px] text-slate-500 font-mono truncate block mt-0.5">{s.agent_url}</span>
+                          <h4 className="text-[15px] font-semibold text-ink truncate">{s.name}</h4>
+                          <span className="text-[11px] text-ink-3 font-mono truncate block mt-0.5">{s.agent_url}</span>
                         </div>
-                        <span className={`px-2 py-0.5 rounded text-[9px] font-extrabold uppercase ${
-                          s.status === 'online' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'
-                        }`}>
-                          {s.status}
-                        </span>
+                        <StatusPill online={s.status === 'online'}>
+                          {s.status === 'online' ? 'Online' : 'Offline'}
+                        </StatusPill>
                       </div>
 
                       {/* Server Card Info Body */}
@@ -706,58 +924,48 @@ export default function App() {
                         {s.status === 'online' ? (
                           <div className="space-y-3.5">
                             {/* CPU Load bar */}
-                            <div className="space-y-1">
-                              <div className="flex justify-between text-[11px] font-semibold">
-                                <span className="text-slate-400">Tải CPU Host</span>
-                                <span className="text-blue-400 font-mono">
+                            <div className="space-y-1.5">
+                              <div className="flex justify-between text-[12px]">
+                                <span className="text-ink-2">Tải CPU Host</span>
+                                <span className="text-ink font-semibold font-mono tabular-nums">
                                   {s.latest_cpu !== null ? `${s.latest_cpu.toFixed(1)}%` : 'N/A'}
                                 </span>
                               </div>
-                              <div className="w-full bg-slate-950 rounded-full h-1.5 border border-slate-850">
-                                <div
-                                  className="bg-blue-500 h-1.5 rounded-full transition-all"
-                                  style={{ width: `${s.latest_cpu !== null ? Math.min(s.latest_cpu, 100) : 0}%` }}
-                                />
-                              </div>
+                              <Meter value={s.latest_cpu ?? 0} tone="var(--c-accent)" />
                             </div>
 
                             {/* RAM Load bar */}
-                            <div className="space-y-1">
-                              <div className="flex justify-between text-[11px] font-semibold">
-                                <span className="text-slate-400">Bộ nhớ RAM Host</span>
-                                <span className="text-purple-400 font-mono">
+                            <div className="space-y-1.5">
+                              <div className="flex justify-between text-[12px]">
+                                <span className="text-ink-2">Bộ nhớ RAM Host</span>
+                                <span className="text-ink font-semibold font-mono tabular-nums">
                                   {s.latest_mem !== null ? `${s.latest_mem.toFixed(1)}%` : 'N/A'}
                                 </span>
                               </div>
-                              <div className="w-full bg-slate-950 rounded-full h-1.5 border border-slate-850">
-                                <div
-                                  className="bg-purple-500 h-1.5 rounded-full transition-all"
-                                  style={{ width: `${s.latest_mem !== null ? Math.min(s.latest_mem, 100) : 0}%` }}
-                                />
-                              </div>
+                              <Meter value={s.latest_mem ?? 0} tone="var(--c-alt)" />
                             </div>
 
                             {/* Containers & Host Connections summary */}
-                            <div className="border-t border-slate-800 pt-3 space-y-1.5">
-                              <div className="flex justify-between items-center">
-                                <span className="text-[10px] text-slate-400 font-bold uppercase">
+                            <div className="border-t border-line pt-3 space-y-2">
+                              <div className="flex justify-between items-center gap-2">
+                                <span className="text-[11px] text-ink-2 font-medium">
                                   {s.container_count > 0 ? `Containers (${s.container_count})` : 'Kết nối Dịch vụ Host'}
                                 </span>
                                 {s.host_unique_connections !== undefined && s.host_unique_connections !== null && (
-                                  <span className="text-[10px] font-mono font-bold text-emerald-400">
+                                  <span className="text-[11px] font-mono font-semibold text-ok tabular-nums">
                                     {s.host_unique_connections} IP active
                                   </span>
                                 )}
                               </div>
-                              <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto">
+                              <div className="flex flex-wrap gap-1.5 max-h-16 overflow-y-auto">
                                 {s.running_containers.length > 0 ? (
                                   s.running_containers.map((name, idx) => (
-                                    <span key={idx} className="bg-slate-950 text-slate-300 border border-slate-800 text-[9px] px-1.5 py-0.5 rounded font-mono truncate max-w-[120px]">
+                                    <span key={idx} className="bg-surface-2 text-ink-2 border border-line text-[11px] px-2 py-0.5 rounded-ios-xs font-mono truncate max-w-[130px]">
                                       {name}
                                     </span>
                                   ))
                                 ) : (
-                                  <span className="text-[10px] text-slate-500 italic font-mono">
+                                  <span className="text-[11px] text-ink-3 font-mono">
                                     Giám sát Host ({s.host_unique_connections ?? 0} Unique IPs / {s.host_total_connections ?? 0} conns)
                                   </span>
                                 )}
@@ -765,12 +973,12 @@ export default function App() {
                             </div>
                           </div>
                         ) : (
-                          <div className="flex flex-col items-center justify-center py-5 text-center bg-red-950/20 border border-red-500/25 rounded-xl p-3.5 space-y-2">
-                            <div className="flex items-center gap-1.5 text-red-400 font-bold text-xs">
-                              <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0" />
-                              <span>Kết nối Agent Thất Bại</span>
+                          <div className="rounded-ios bg-bad/8 border border-bad/20 p-3.5 space-y-2">
+                            <div className="flex items-center gap-2 text-bad font-semibold text-[13px]">
+                              <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                              <span>Kết nối Agent thất bại</span>
                             </div>
-                            <p className="text-[11px] text-red-300/90 leading-relaxed font-mono bg-slate-950/80 px-2.5 py-1.5 rounded-lg border border-red-500/20 w-full break-words">
+                            <p className="text-[11px] text-ink-2 leading-relaxed font-mono break-words">
                               {s.status_reason || 'Không thể kết nối đến Agent. Kiểm tra cài đặt dịch vụ và IP/Port.'}
                             </p>
                           </div>
@@ -787,7 +995,7 @@ export default function App() {
                               setShowOverview(false)
                             }
                           }}
-                          className="flex-1 bg-slate-950 hover:bg-blue-600 border border-slate-800 hover:border-blue-500 hover:text-white text-slate-300 font-semibold rounded-xl py-2 text-xs transition-all"
+                          className={`${BTN_QUIET} flex-1 text-[13px] py-2`}
                         >
                           Giám sát chi tiết
                         </button>
@@ -796,7 +1004,7 @@ export default function App() {
                             const originalServerObj = servers.find(item => item.id === s.id)
                             if (originalServerObj) handleOpenSshTab(originalServerObj)
                           }}
-                          className="px-3 bg-slate-950 hover:bg-blue-600/20 text-slate-400 hover:text-blue-400 border border-slate-800 hover:border-blue-500/40 rounded-xl text-xs font-semibold transition-all flex items-center gap-1"
+                          className={`${BTN_QUIET} text-[13px] py-2 px-3`}
                           title="Mở SSH Terminal"
                         >
                           <Terminal className="w-4 h-4" />
@@ -808,15 +1016,15 @@ export default function App() {
                   ))}
                 </div>
               ) : (
-                <div className="text-center py-16 border border-dashed border-slate-850 rounded-3xl bg-slate-900/10 space-y-4">
-                  <Server className="w-12 h-12 text-slate-700 mx-auto" />
-                  <h4 className="text-sm font-bold text-slate-400">Chưa đăng ký Game Server nào</h4>
-                  <button
-                    onClick={() => setShowAddModal(true)}
-                    className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 py-2 text-xs font-semibold shadow-md active:scale-95 transition-all"
-                  >
-                    Thêm Server Game mới
-                  </button>
+                <div className={`${CARD} text-center py-16 space-y-4`}>
+                  <Server className="w-10 h-10 text-ink-3 mx-auto" />
+                  <h4 className="text-[15px] font-semibold text-ink">Chưa đăng ký Game Server nào</h4>
+                  <div>
+                    <button onClick={() => setShowAddModal(true)} className={BTN_PRIMARY}>
+                      <Plus className="w-4 h-4" />
+                      Thêm Server Game mới
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -824,33 +1032,43 @@ export default function App() {
           </div>
         ) : selectedServer ? (
           /* SINGLE SERVER DETAILED SCREEN */
-          <div className="flex-1 flex flex-col overflow-y-auto space-y-6 pr-1">
-            
+          <div className="flex-1 flex flex-col overflow-y-auto space-y-5 pr-1">
+
             {/* Header Server title */}
-            <div className="flex justify-between items-center bg-slate-900 border border-slate-800/80 rounded-2xl p-5 shadow-lg flex-shrink-0">
-              <div className="flex items-center gap-4">
-                <div className={`p-3.5 rounded-xl ${selectedServer.status === 'online' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
-                  <Globe className="w-6 h-6" />
+            <div className={`${CARD} flex flex-wrap justify-between items-center gap-4 p-5 flex-shrink-0`}>
+              <div className="flex items-center gap-4 min-w-0">
+                <div
+                  className="p-3 rounded-ios flex items-center justify-center"
+                  style={{
+                    backgroundColor: selectedServer.status === 'online'
+                      ? 'color-mix(in srgb, var(--c-ok) 12%, transparent)'
+                      : 'color-mix(in srgb, var(--c-bad) 12%, transparent)',
+                    color: selectedServer.status === 'online' ? 'var(--c-ok)' : 'var(--c-bad)'
+                  }}
+                >
+                  <Globe className="w-5 h-5" />
                 </div>
-                <div>
-                  <h2 className="text-lg font-bold text-slate-100">{selectedServer.name}</h2>
-                  <p className="text-xs text-slate-400 mt-0.5">Agent URL: <span className="font-mono text-blue-400">{selectedServer.agent_url}</span></p>
+                <div className="min-w-0">
+                  <h2 className="text-[18px] font-semibold tracking-tight text-ink truncate">{selectedServer.name}</h2>
+                  <p className="text-[12px] text-ink-2 mt-0.5 truncate">
+                    Agent URL: <span className="font-mono text-accent">{selectedServer.agent_url}</span>
+                  </p>
                 </div>
               </div>
 
-              <div className="flex items-center gap-3">
-                <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-                  selectedServer.status === 'online' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'
-                }`}>
-                  {selectedServer.status === 'online' ? 'ONLINE' : 'OFFLINE'}
-                </span>
-                
+              <div className="flex items-center gap-2">
+                <StatusPill online={selectedServer.status === 'online'}>
+                  {selectedServer.status === 'online' ? 'Online' : 'Offline'}
+                </StatusPill>
+
+                <div className="w-px h-6 bg-line mx-0.5" />
+
                 <button
                   onClick={() => handleOpenSshTab(selectedServer)}
-                  className="flex items-center gap-2 px-3 py-2 bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 border border-blue-500/20 rounded-xl text-xs font-bold transition-all active:scale-95"
+                  className={`${BTN_QUIET_SM} gap-1.5`}
                   title="Mở SSH Terminal"
                 >
-                  <Terminal className="w-4 h-4" />
+                  <Terminal className="w-[15px] h-[15px]" />
                   <span>SSH Terminal</span>
                 </button>
 
@@ -862,31 +1080,31 @@ export default function App() {
                     setEditToken(selectedServer.agent_token)
                     setShowEditModal(true)
                   }}
-                  className="p-2.5 bg-slate-800/50 hover:bg-slate-700/50 text-slate-400 hover:text-blue-400 border border-slate-800/40 rounded-xl transition-all"
+                  className={ICON_BTN_SM}
                   title="Sửa Server"
                 >
-                  <Edit2 className="w-4 h-4" />
+                  <Edit2 className="w-[15px] h-[15px]" />
                 </button>
 
                 <button
                   onClick={() => handleDeleteServer(selectedServer.id)}
-                  className="p-2.5 bg-slate-800/50 hover:bg-red-950/30 text-slate-400 hover:text-red-400 border border-slate-800/40 rounded-xl transition-all"
+                  className={`${ICON_BTN_SM} hover:text-bad`}
                   title="Xóa Server"
                 >
-                  <Trash2 className="w-4 h-4" />
+                  <Trash2 className="w-[15px] h-[15px]" />
                 </button>
               </div>
             </div>
 
             {/* Offline Alert Banner in Server Detail View */}
             {selectedServer.status !== 'online' && (
-              <div className="bg-red-950/30 border border-red-500/30 rounded-2xl p-4 flex items-center gap-3.5 shadow-lg">
-                <div className="p-2.5 bg-red-500/20 text-red-400 rounded-xl">
-                  <AlertTriangle className="w-6 h-6 text-red-500" />
+              <div className="rounded-ios-lg bg-bad/8 border border-bad/20 p-4 flex items-center gap-3.5 flex-shrink-0">
+                <div className="p-2.5 rounded-ios bg-bad/12 text-bad flex-shrink-0">
+                  <AlertTriangle className="w-5 h-5" />
                 </div>
-                <div>
-                  <h4 className="text-xs font-bold text-red-400 uppercase tracking-wider">Cảnh báo: Agent Đang Ngoại Tuyến (Offline)</h4>
-                  <p className="text-xs text-red-300 font-mono mt-0.5">
+                <div className="min-w-0">
+                  <h4 className="text-[13px] font-semibold text-bad">Cảnh báo: Agent đang ngoại tuyến (Offline)</h4>
+                  <p className="text-[12px] text-ink-2 font-mono mt-0.5 break-words">
                     Nguyên nhân: {overviewData.find(s => s.id === selectedServer.id)?.status_reason || selectedServer.status_reason || 'Agent URL không phản hồi. Kiểm tra lại dịch vụ game-agent và cấu hình IP/Port.'}
                   </p>
                 </div>
@@ -894,82 +1112,86 @@ export default function App() {
             )}
 
             {/* Date Filter Bar */}
-            <div className="bg-slate-900 border border-slate-800/80 rounded-2xl p-4 shadow-md flex-shrink-0 space-y-3">
+            <div className={`${CARD} p-4 flex-shrink-0 space-y-3`}>
               {/* Row 1: Title + Quick Presets */}
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
-                  <Clock className="w-5 h-5 text-blue-500" />
-                  <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Lọc lịch sử tải Host</h3>
+                  <Clock className="w-[18px] h-[18px] text-ink-2" />
+                  <h3 className={SECTION_TITLE}>Lọc lịch sử tải Host</h3>
+                  {historyLoading ? (
+                    <span className="inline-flex items-center gap-1.5 h-[22px] px-2 rounded-full bg-accent/12 text-accent text-[11px] font-semibold">
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      Đang tải...
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 h-[22px] px-2 rounded-full bg-surface-2 border border-line text-ink-2 text-[11px] font-semibold">
+                      {history.length} điểm dữ liệu
+                    </span>
+                  )}
                 </div>
 
-                <div className="flex items-center gap-1.5">
-                  {hourPresets.map(p => (
-                    <button
-                      key={p.key}
-                      type="button"
-                      onClick={() => handleHourFilter(p.key, p.hours)}
-                      className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all active:scale-95 ${
-                        activePreset === p.key
-                          ? 'bg-emerald-600 text-white shadow-md shadow-emerald-500/20'
-                          : 'bg-slate-950 border border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
-                      }`}
-                    >
-                      {p.label}
-                    </button>
-                  ))}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <div className="flex items-center gap-1 p-1 rounded-ios bg-surface-2 border border-line">
+                    {hourPresets.map(p => (
+                      <button
+                        key={p.key}
+                        type="button"
+                        onClick={() => handleHourFilter(p.key, p.hours)}
+                        disabled={historyLoading}
+                        className={segBtn(activePreset === p.key)}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
 
-                  <span className="text-slate-700 mx-0.5">|</span>
-
-                  {datePresets.map(p => (
-                    <button
-                      key={p.key}
-                      type="button"
-                      onClick={() => handlePresetFilter(p.key, p.days)}
-                      className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all active:scale-95 ${
-                        activePreset === p.key
-                          ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-                          : 'bg-slate-950 border border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
-                      }`}
-                    >
-                      {p.label}
-                    </button>
-                  ))}
+                  <div className="flex items-center gap-1 p-1 rounded-ios bg-surface-2 border border-line">
+                    {datePresets.map(p => (
+                      <button
+                        key={p.key}
+                        type="button"
+                        onClick={() => handlePresetFilter(p.key, p.days)}
+                        disabled={historyLoading}
+                        className={segBtn(activePreset === p.key)}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 
               {/* Row 2: Custom Date Range */}
-              <form onSubmit={handleFilterHistory} className="flex flex-wrap items-center gap-4 text-xs font-semibold border-t border-slate-800/60 pt-3">
-                <div className="flex items-center gap-1.5 text-slate-500">
+              <form onSubmit={handleFilterHistory} className="flex flex-wrap items-center gap-3 text-[12px] border-t border-line pt-3">
+                <div className="flex items-center gap-1.5 text-ink-2">
                   <CalendarDays className="w-4 h-4" />
-                  <span className="text-[10px] font-bold uppercase tracking-wider">Tùy chỉnh:</span>
+                  <span className="font-medium">Tùy chỉnh</span>
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <span className="text-slate-400 font-medium">Từ</span>
+                  <span className="text-ink-2">Từ</span>
                   <input
                     type="date"
                     value={startDate}
                     onChange={e => { setStartDate(e.target.value); setActivePreset('custom') }}
-                    className="bg-slate-950 border border-slate-800 rounded-lg px-4 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500 w-44 font-semibold cursor-pointer hover:border-slate-700 transition-colors"
+                    className={`${FIELD} w-auto text-[13px] py-2 cursor-pointer`}
                     required
                   />
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <span className="text-slate-400 font-medium">đến</span>
+                  <span className="text-ink-2">đến</span>
                   <input
                     type="date"
                     value={endDate}
                     onChange={e => { setEndDate(e.target.value); setActivePreset('custom') }}
-                    className="bg-slate-950 border border-slate-800 rounded-lg px-4 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500 w-44 font-semibold cursor-pointer hover:border-slate-700 transition-colors"
+                    className={`${FIELD} w-auto text-[13px] py-2 cursor-pointer`}
                     required
                   />
                 </div>
 
-                <button
-                  type="submit"
-                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg px-5 py-2.5 transition-all active:scale-95 shadow-md shadow-blue-500/10"
-                >
+                <button type="submit" disabled={historyLoading} className={`${BTN_PRIMARY} text-[13px] py-2 disabled:opacity-50`}>
+                  {historyLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   Lọc
                 </button>
 
@@ -977,9 +1199,10 @@ export default function App() {
                   <button
                     type="button"
                     onClick={handleClearHistoryFilter}
-                    className="bg-slate-800 hover:bg-slate-750 text-slate-300 font-bold rounded-lg px-4 py-2.5 transition-all active:scale-95 border border-slate-700/60"
+                    className={`${BTN_QUIET} text-[13px] py-2`}
                   >
-                    ↻ Live
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    Live
                   </button>
                 )}
               </form>
@@ -987,83 +1210,65 @@ export default function App() {
 
             {/* Host Resource History charts */}
             {history.length > 0 ? (
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-shrink-0">
-                
+              <div
+                className={`grid grid-cols-1 xl:grid-cols-3 gap-4 flex-shrink-0 transition-opacity duration-200 ${
+                  historyLoading ? 'opacity-40 pointer-events-none' : 'opacity-100'
+                }`}
+              >
+
                 {/* CPU usage history */}
-                <div className="bg-slate-900 border border-slate-800/60 rounded-2xl p-5 shadow-md">
+                <div className={`${CARD} p-5`}>
                   <div className="flex items-center gap-2 mb-4">
-                    <Cpu className="w-5 h-5 text-blue-500" />
-                    <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Lịch sử CPU Server (%)</h3>
+                    <Cpu className="w-[18px] h-[18px] text-ink-2" />
+                    <h3 className={SECTION_TITLE}>Lịch sử CPU Server (%)</h3>
                   </div>
                   <div className="h-44 w-full">
                     <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={history}>
-                        <defs>
-                          <linearGradient id="colorCpu" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2}/>
-                            <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                        <XAxis dataKey="timestamp" stroke="#64748b" fontSize={9} />
-                        <YAxis stroke="#64748b" fontSize={9} domain={[0, 100]} />
-                        <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: 8 }} />
-                        <Area type="monotone" dataKey="host_cpu" name="CPU Host" stroke="#3b82f6" fillOpacity={1} fill="url(#colorCpu)" strokeWidth={2} />
+                      <AreaChart data={history} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} vertical={false} />
+                        <XAxis dataKey="timestamp" stroke={chart.axis} fontSize={10} tickLine={false} axisLine={false} />
+                        <YAxis stroke={chart.axis} fontSize={10} domain={cpuAxis.domain} ticks={cpuAxis.ticks} tickLine={false} axisLine={false} />
+                        <Tooltip contentStyle={tooltipStyle} />
+                        <Area type="monotone" dataKey="host_cpu" name="CPU Host" stroke={chart.accent} fill={chart.accent} fillOpacity={0.1} strokeWidth={2} />
                       </AreaChart>
                     </ResponsiveContainer>
                   </div>
                 </div>
 
                 {/* Memory usage history */}
-                <div className="bg-slate-900 border border-slate-800/60 rounded-2xl p-5 shadow-md">
+                <div className={`${CARD} p-5`}>
                   <div className="flex items-center gap-2 mb-4">
-                    <Database className="w-5 h-5 text-purple-500" />
-                    <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Lịch sử RAM Server (%)</h3>
+                    <Database className="w-[18px] h-[18px] text-ink-2" />
+                    <h3 className={SECTION_TITLE}>Lịch sử RAM Server (%)</h3>
                   </div>
                   <div className="h-44 w-full">
                     <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={history}>
-                        <defs>
-                          <linearGradient id="colorMem" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#a855f7" stopOpacity={0.2}/>
-                            <stop offset="95%" stopColor="#a855f7" stopOpacity={0}/>
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                        <XAxis dataKey="timestamp" stroke="#64748b" fontSize={9} />
-                        <YAxis stroke="#64748b" fontSize={9} domain={[0, 100]} />
-                        <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: 8 }} />
-                        <Area type="monotone" dataKey="host_mem" name="RAM Host" stroke="#a855f7" fillOpacity={1} fill="url(#colorMem)" strokeWidth={2} />
+                      <AreaChart data={history} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} vertical={false} />
+                        <XAxis dataKey="timestamp" stroke={chart.axis} fontSize={10} tickLine={false} axisLine={false} />
+                        <YAxis stroke={chart.axis} fontSize={10} domain={memAxis.domain} ticks={memAxis.ticks} tickLine={false} axisLine={false} />
+                        <Tooltip contentStyle={tooltipStyle} />
+                        <Area type="monotone" dataKey="host_mem" name="RAM Host" stroke={chart.alt} fill={chart.alt} fillOpacity={0.1} strokeWidth={2} />
                       </AreaChart>
                     </ResponsiveContainer>
                   </div>
                 </div>
 
                 {/* Connection usage history */}
-                <div className="bg-slate-900 border border-slate-800/60 rounded-2xl p-5 shadow-md">
+                <div className={`${CARD} p-5`}>
                   <div className="flex items-center gap-2 mb-4">
-                    <Users className="w-5 h-5 text-emerald-400" />
-                    <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Lịch sử Kết nối User (IPs / Sockets)</h3>
+                    <Users className="w-[18px] h-[18px] text-ink-2" />
+                    <h3 className={SECTION_TITLE}>Lịch sử Kết nối User (IPs / Sockets)</h3>
                   </div>
                   <div className="h-44 w-full">
                     <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={history}>
-                        <defs>
-                          <linearGradient id="colorUniqueConns" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#10b981" stopOpacity={0.25}/>
-                            <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                          </linearGradient>
-                          <linearGradient id="colorTotalConns" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.15}/>
-                            <stop offset="95%" stopColor="#06b6d4" stopOpacity={0}/>
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                        <XAxis dataKey="timestamp" stroke="#64748b" fontSize={9} />
-                        <YAxis stroke="#64748b" fontSize={9} allowDecimals={false} />
-                        <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: 8 }} />
-                        <Area type="monotone" dataKey="unique_connections" name="Unique IPs" stroke="#10b981" fillOpacity={1} fill="url(#colorUniqueConns)" strokeWidth={2} />
-                        <Area type="monotone" dataKey="total_connections" name="Total Sockets" stroke="#06b6d4" fillOpacity={1} fill="url(#colorTotalConns)" strokeWidth={1.5} strokeDasharray="4 4" />
+                      <AreaChart data={history} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} vertical={false} />
+                        <XAxis dataKey="timestamp" stroke={chart.axis} fontSize={10} tickLine={false} axisLine={false} />
+                        <YAxis stroke={chart.axis} fontSize={10} domain={connAxis.domain} ticks={connAxis.ticks} tickLine={false} axisLine={false} />
+                        <Tooltip contentStyle={tooltipStyle} />
+                        <Area type="monotone" dataKey="unique_connections" name="Unique IPs" stroke={chart.ok} fill={chart.ok} fillOpacity={0.12} strokeWidth={2} />
+                        <Area type="monotone" dataKey="total_connections" name="Total Sockets" stroke={chart.info} fill={chart.info} fillOpacity={0.06} strokeWidth={1.5} strokeDasharray="4 4" />
                       </AreaChart>
                     </ResponsiveContainer>
                   </div>
@@ -1071,66 +1276,85 @@ export default function App() {
 
               </div>
             ) : (
-              <div className="py-12 text-center text-slate-500 font-semibold bg-slate-900 border border-slate-850 rounded-2xl flex-shrink-0">
-                Không tìm thấy dữ liệu hoạt động trong khoảng thời gian đã chọn.
+              <div className={`${CARD} py-12 text-center text-[13px] text-ink-2 flex-shrink-0`}>
+                {historyLoading ? (
+                  <span className="inline-flex items-center gap-2 text-ink-2">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Đang tải dữ liệu lịch sử...
+                  </span>
+                ) : (
+                  'Không tìm thấy dữ liệu hoạt động trong khoảng thời gian đã chọn.'
+                )}
               </div>
             )}
 
             {/* Containers List OR Non-Docker Host Management Dashboard */}
             {containers.length > 0 ? (
-              <div className="bg-slate-900 border border-slate-800/60 rounded-2xl p-5 shadow-lg flex-1 min-h-[300px]">
-                <div className="flex items-center gap-2.5 mb-4">
-                  <Radio className="w-5 h-5 text-green-500" />
-                  <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Docker Containers trên Server</h3>
+              <div className={`${CARD} p-5 flex-shrink-0`}>
+                <div className="flex items-center justify-between gap-3 mb-4">
+                  <div className="flex items-center gap-2">
+                    <Radio className="w-[18px] h-[18px] text-ink-2" />
+                    <h3 className={SECTION_TITLE}>Docker Containers trên Server</h3>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <span className="inline-flex items-center h-[22px] px-2 rounded-full bg-surface-2 border border-line text-ink-2 text-[11px] font-semibold tabular-nums">
+                      {containers.length} containers
+                    </span>
+                    <button
+                      onClick={handleRefreshContainers}
+                      disabled={containersRefreshing}
+                      className={`${BTN_QUIET_SM} gap-1.5 disabled:opacity-55 disabled:cursor-not-allowed`}
+                      title="Làm mới danh sách Container"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${containersRefreshing ? 'animate-spin' : ''}`} />
+                      {containersRefreshing ? 'Đang tải...' : 'Làm mới'}
+                    </button>
+                  </div>
                 </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse text-left text-xs">
+                <div className="overflow-x-auto -mx-1 px-1">
+                  <table className="w-full border-collapse text-left text-[13px]">
                     <thead>
-                      <tr className="border-b border-slate-800 text-slate-400 font-semibold">
-                        <th className="py-3 px-4">Tên Container</th>
-                        <th className="py-3 px-4">Docker Image</th>
-                        <th className="py-3 px-4">Trạng thái (State)</th>
-                        <th className="py-3 px-4">Status</th>
-                        <th className="py-3 px-4 text-center">Kết nối (Unique / Active)</th>
-                        <th className="py-3 px-4 text-center"></th>
+                      <tr className="border-b border-line text-ink-2">
+                        <th className="py-2.5 px-4 font-medium text-[11px] uppercase tracking-wide">Tên Container</th>
+                        <th className="py-2.5 px-4 font-medium text-[11px] uppercase tracking-wide">Docker Image</th>
+                        <th className="py-2.5 px-4 font-medium text-[11px] uppercase tracking-wide">Trạng thái (State)</th>
+                        <th className="py-2.5 px-4 font-medium text-[11px] uppercase tracking-wide">Status</th>
+                        <th className="py-2.5 px-4 font-medium text-[11px] uppercase tracking-wide text-center">Kết nối (Unique / Active)</th>
+                        <th className="py-2.5 px-4"></th>
                       </tr>
                     </thead>
                     <tbody>
                       {containers.map(c => (
-                        <tr key={c.id} className="border-b border-slate-850 hover:bg-slate-950/20 transition-all">
-                          <td className="py-3.5 px-4 font-semibold text-slate-200">{c.name}</td>
-                          <td className="py-3.5 px-4 font-mono text-slate-400 text-[11px] max-w-[200px] truncate" title={c.image}>
+                        <tr key={c.id} className="border-b border-line last:border-0 hover:bg-surface-2 transition-colors">
+                          <td className="py-3 px-4 font-semibold text-ink">{c.name}</td>
+                          <td className="py-3 px-4 font-mono text-ink-2 text-[12px] max-w-[200px] truncate" title={c.image}>
                             {c.image}
                           </td>
-                          <td className="py-3.5 px-4">
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                              c.state === 'running' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'
-                            }`}>
-                              {c.state}
-                            </span>
+                          <td className="py-3 px-4">
+                            <StatusPill online={c.state === 'running'}>{c.state}</StatusPill>
                           </td>
-                          <td className="py-3.5 px-4 text-slate-400 font-mono text-[11px]">{c.status}</td>
-                          <td className="py-3.5 px-4 text-center font-mono">
+                          <td className="py-3 px-4 text-ink-2 font-mono text-[12px]">{c.status}</td>
+                          <td className="py-3 px-4 text-center font-mono">
                             <div className="flex items-center justify-center gap-1.5">
-                              <span className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-bold px-2 py-0.5 rounded text-[11px] flex items-center gap-1">
-                                <Users className="w-3 h-3 text-emerald-400" />
+                              <span className="inline-flex items-center gap-1 bg-ok/12 text-ok font-semibold px-2 py-0.5 rounded-ios-xs text-[12px] tabular-nums">
+                                <Users className="w-3 h-3" />
                                 {c.unique_connections ?? 0} IP
                               </span>
-                              <span className="text-slate-500 text-[10px]">/</span>
-                              <span className="bg-slate-800 text-slate-300 px-2 py-0.5 rounded text-[11px]">
+                              <span className="text-ink-3 text-[11px]">/</span>
+                              <span className="bg-surface-2 border border-line text-ink-2 px-2 py-0.5 rounded-ios-xs text-[12px] tabular-nums">
                                 {c.total_connections ?? 0} conns
                               </span>
                             </div>
                           </td>
-                          <td className="py-3.5 px-4 text-center">
+                          <td className="py-3 px-4 text-center">
                             <button
                               onClick={() => {
                                 setSelectedContainer(c)
                                 setContainerStats(null)
                                 setContainerLogs('')
                               }}
-                              className="bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg px-3 py-1.5 text-xs transition-all active:scale-95 shadow-md shadow-blue-500/10"
+                              className={`${BTN_QUIET} text-[12px] py-1.5 px-3`}
                             >
                               Giám sát chi tiết
                             </button>
@@ -1143,21 +1367,21 @@ export default function App() {
               </div>
             ) : (
               /* Non-Docker Host Management Dashboard */
-              <div className="bg-slate-900 border border-slate-800/60 rounded-2xl p-6 shadow-lg space-y-6">
+              <div className={`${CARD} p-6 space-y-5`}>
                 {/* Section Banner Header */}
-                <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
-                  <div className="flex items-center gap-3">
-                    <div className="p-3 bg-blue-600/10 text-blue-400 rounded-xl">
-                      <Server className="w-6 h-6" />
+                <div className="flex flex-wrap items-center justify-between gap-4 border-b border-line pb-4">
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <div className="p-3 bg-accent/12 text-accent rounded-ios flex-shrink-0">
+                      <Server className="w-5 h-5" />
                     </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-bold text-slate-100">Bảng Quản trị Hệ thống Host (Non-Docker Server)</h3>
-                        <span className="bg-blue-500/10 border border-blue-500/20 text-blue-400 font-bold px-2 py-0.5 rounded text-[10px] uppercase">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="text-[15px] font-semibold text-ink">Bảng Quản trị Hệ thống Host (Non-Docker Server)</h3>
+                        <span className="bg-surface-2 border border-line text-ink-2 font-medium px-2 py-0.5 rounded-ios-xs text-[11px]">
                           Native Systemd Agent
                         </span>
                       </div>
-                      <p className="text-xs text-slate-400 mt-0.5">
+                      <p className="text-[12px] text-ink-2 mt-1 leading-relaxed">
                         Máy chủ này đang chạy ứng dụng trực tiếp trên Host OS. Agent thu thập trực tiếp thông số phần cứng &amp; TCP Sockets từ Kernel Linux.
                       </p>
                     </div>
@@ -1165,7 +1389,7 @@ export default function App() {
 
                   <button
                     onClick={() => handleOpenSshTab(selectedServer)}
-                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2.5 rounded-xl text-xs transition-all shadow-lg shadow-blue-500/20 active:scale-95"
+                    className={`${BTN_PRIMARY} text-[13px] py-2`}
                   >
                     <Terminal className="w-4 h-4" />
                     Mở Terminal SSH (Host)
@@ -1176,14 +1400,14 @@ export default function App() {
                 {(() => {
                   const sOverview = overviewData.find(s => s.id === selectedServer.id)
                   return (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                      <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex items-center gap-3">
-                        <div className="p-2.5 bg-blue-500/10 text-blue-400 rounded-lg">
-                          <Cpu className="w-5 h-5" />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                      <div className={`${INSET} p-4 flex items-center gap-3`}>
+                        <div className="p-2.5 bg-accent/12 text-accent rounded-ios-sm">
+                          <Cpu className="w-[18px] h-[18px]" />
                         </div>
                         <div>
-                          <div className="text-[10px] font-bold text-slate-400 uppercase">Tải CPU Host</div>
-                          <div className="text-lg font-extrabold text-blue-400 font-mono mt-0.5">
+                          <div className="text-[11px] font-medium text-ink-2">Tải CPU Host</div>
+                          <div className="text-[17px] font-semibold text-ink font-mono tabular-nums mt-0.5">
                             {sOverview?.latest_cpu !== null && sOverview?.latest_cpu !== undefined
                               ? `${sOverview.latest_cpu.toFixed(1)}%`
                               : 'N/A'}
@@ -1191,13 +1415,13 @@ export default function App() {
                         </div>
                       </div>
 
-                      <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex items-center gap-3">
-                        <div className="p-2.5 bg-purple-500/10 text-purple-400 rounded-lg">
-                          <Database className="w-5 h-5" />
+                      <div className={`${INSET} p-4 flex items-center gap-3`}>
+                        <div className="p-2.5 bg-alt/12 text-alt rounded-ios-sm">
+                          <Database className="w-[18px] h-[18px]" />
                         </div>
                         <div>
-                          <div className="text-[10px] font-bold text-slate-400 uppercase">Sử dụng RAM Host</div>
-                          <div className="text-lg font-extrabold text-purple-400 font-mono mt-0.5">
+                          <div className="text-[11px] font-medium text-ink-2">Sử dụng RAM Host</div>
+                          <div className="text-[17px] font-semibold text-ink font-mono tabular-nums mt-0.5">
                             {sOverview?.latest_mem !== null && sOverview?.latest_mem !== undefined
                               ? `${sOverview.latest_mem.toFixed(1)}%`
                               : 'N/A'}
@@ -1205,25 +1429,25 @@ export default function App() {
                         </div>
                       </div>
 
-                      <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex items-center gap-3">
-                        <div className="p-2.5 bg-emerald-500/10 text-emerald-400 rounded-lg">
-                          <Users className="w-5 h-5" />
+                      <div className={`${INSET} p-4 flex items-center gap-3`}>
+                        <div className="p-2.5 bg-ok/12 text-ok rounded-ios-sm">
+                          <Users className="w-[18px] h-[18px]" />
                         </div>
                         <div>
-                          <div className="text-[10px] font-bold text-slate-400 uppercase">Unique Clients (IPs)</div>
-                          <div className="text-lg font-extrabold text-emerald-400 font-mono mt-0.5">
+                          <div className="text-[11px] font-medium text-ink-2">Unique Clients (IPs)</div>
+                          <div className="text-[17px] font-semibold text-ink font-mono tabular-nums mt-0.5">
                             {sOverview?.host_unique_connections ?? 0} IP
                           </div>
                         </div>
                       </div>
 
-                      <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex items-center gap-3">
-                        <div className="p-2.5 bg-cyan-500/10 text-cyan-400 rounded-lg">
-                          <Wifi className="w-5 h-5" />
+                      <div className={`${INSET} p-4 flex items-center gap-3`}>
+                        <div className="p-2.5 bg-info/12 text-info rounded-ios-sm">
+                          <Wifi className="w-[18px] h-[18px]" />
                         </div>
                         <div>
-                          <div className="text-[10px] font-bold text-slate-400 uppercase">Active TCP Sockets</div>
-                          <div className="text-lg font-extrabold text-cyan-400 font-mono mt-0.5">
+                          <div className="text-[11px] font-medium text-ink-2">Active TCP Sockets</div>
+                          <div className="text-[17px] font-semibold text-ink font-mono tabular-nums mt-0.5">
                             {sOverview?.host_total_connections ?? 0} conns
                           </div>
                         </div>
@@ -1233,84 +1457,85 @@ export default function App() {
                 })()}
 
                 {/* Network Ports Monitoring Section */}
-                <div className="bg-slate-950 p-5 rounded-2xl border border-slate-800 space-y-4">
-                  <div className="flex items-center justify-between">
+                <div className={`${INSET} p-5 space-y-3.5`}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
-                      <Globe className="w-4 h-4 text-emerald-400" />
-                      <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wider">
-                        Các Cổng Dịch Vụ Hệ Thống Đang Giám Sát (Monitored TCP Ports)
+                      <Globe className="w-4 h-4 text-ink-2" />
+                      <h4 className="text-[13px] font-semibold text-ink">
+                        Các cổng dịch vụ hệ thống đang giám sát (Monitored TCP Ports)
                       </h4>
                     </div>
-                    <span className="text-[10px] text-slate-500 font-mono">Linux Kernel /proc/net/tcp</span>
+                    <span className="text-[11px] text-ink-3 font-mono">Linux Kernel /proc/net/tcp</span>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-xl flex items-center justify-between">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></div>
-                        <div>
-                          <div className="text-xs font-mono font-bold text-slate-200">Port 80 (HTTP)</div>
-                          <div className="text-[10px] text-slate-400">Web App / API Proxy</div>
+                    <div className="bg-surface border border-line p-3.5 rounded-ios flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="w-2 h-2 rounded-full bg-ok flex-shrink-0" />
+                        <div className="min-w-0">
+                          <div className="text-[13px] font-mono font-semibold text-ink">Port 80 (HTTP)</div>
+                          <div className="text-[11px] text-ink-2 truncate">Web App / API Proxy</div>
                         </div>
                       </div>
-                      <span className="text-xs font-mono font-bold text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded">
+                      <span className="text-[11px] font-semibold text-ok bg-ok/12 px-2 py-1 rounded-ios-xs flex-shrink-0">
                         Active
                       </span>
                     </div>
 
-                    <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-xl flex items-center justify-between">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></div>
-                        <div>
-                          <div className="text-xs font-mono font-bold text-slate-200">Port 443 (HTTPS)</div>
-                          <div className="text-[10px] text-slate-400">SSL Web Service</div>
+                    <div className="bg-surface border border-line p-3.5 rounded-ios flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="w-2 h-2 rounded-full bg-ok flex-shrink-0" />
+                        <div className="min-w-0">
+                          <div className="text-[13px] font-mono font-semibold text-ink">Port 443 (HTTPS)</div>
+                          <div className="text-[11px] text-ink-2 truncate">SSL Web Service</div>
                         </div>
                       </div>
-                      <span className="text-xs font-mono font-bold text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded">
+                      <span className="text-[11px] font-semibold text-ok bg-ok/12 px-2 py-1 rounded-ios-xs flex-shrink-0">
                         Active
                       </span>
                     </div>
 
-                    <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-xl flex items-center justify-between">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-2.5 h-2.5 rounded-full bg-blue-500"></div>
-                        <div>
-                          <div className="text-xs font-mono font-bold text-slate-200">Port {selectedServer.ssh_port || 22} (SSH)</div>
-                          <div className="text-[10px] text-slate-400">Host Terminal Shell</div>
+                    <div className="bg-surface border border-line p-3.5 rounded-ios flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="w-2 h-2 rounded-full bg-accent flex-shrink-0" />
+                        <div className="min-w-0">
+                          <div className="text-[13px] font-mono font-semibold text-ink">Port {selectedServer.ssh_port || 22} (SSH)</div>
+                          <div className="text-[11px] text-ink-2 truncate">Host Terminal Shell</div>
                         </div>
                       </div>
                       <button
                         onClick={() => handleOpenSshTab(selectedServer)}
-                        className="text-[10px] font-bold text-blue-400 hover:text-blue-300 bg-blue-500/10 px-2.5 py-1.5 rounded-lg transition-colors flex items-center gap-1"
+                        className="text-[11px] font-semibold text-accent bg-accent/12 px-2.5 py-1.5 rounded-ios-xs transition-all hover:opacity-80 active:scale-95 flex items-center gap-1 flex-shrink-0"
                       >
-                        Terminal →
+                        Terminal
+                        <ChevronRight className="w-3 h-3" />
                       </button>
                     </div>
                   </div>
                 </div>
 
                 {/* Helpful Linux Commands Section */}
-                <div className="bg-slate-950 p-5 rounded-2xl border border-slate-800 space-y-3 text-xs">
-                  <h4 className="font-bold text-slate-300 uppercase tracking-wider text-[11px] flex items-center gap-2">
-                    <Terminal className="w-4 h-4 text-blue-400" />
-                    Lệnh Quản Trị Hệ Thống Nhanh (Host Command Helpers)
+                <div className={`${INSET} p-5 space-y-3`}>
+                  <h4 className="text-[13px] font-semibold text-ink flex items-center gap-2">
+                    <Terminal className="w-4 h-4 text-ink-2" />
+                    Lệnh quản trị hệ thống nhanh (Host Command Helpers)
                   </h4>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 font-mono text-[11px]">
-                    <div className="bg-slate-900 border border-slate-850 p-3 rounded-xl">
-                      <span className="text-slate-400 block text-[10px] font-sans font-semibold mb-0.5">Xem log ngầm Agent:</span>
-                      <code className="text-blue-400">sudo journalctl -u game-agent -f</code>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="bg-surface border border-line p-3 rounded-ios">
+                      <span className="text-[11px] text-ink-2 block mb-1">Xem log ngầm Agent:</span>
+                      <code className="text-[12px] font-mono text-accent break-all">sudo journalctl -u game-agent -f</code>
                     </div>
-                    <div className="bg-slate-900 border border-slate-850 p-3 rounded-xl">
-                      <span className="text-slate-400 block text-[10px] font-sans font-semibold mb-0.5">Kiểm tra các cổng đang lắng nghe:</span>
-                      <code className="text-emerald-400">sudo ss -tulpn</code>
+                    <div className="bg-surface border border-line p-3 rounded-ios">
+                      <span className="text-[11px] text-ink-2 block mb-1">Kiểm tra các cổng đang lắng nghe:</span>
+                      <code className="text-[12px] font-mono text-accent break-all">sudo ss -tulpn</code>
                     </div>
-                    <div className="bg-slate-900 border border-slate-850 p-3 rounded-xl">
-                      <span className="text-slate-400 block text-[10px] font-sans font-semibold mb-0.5">Kiểm tra trạng thái Agent service:</span>
-                      <code className="text-purple-400">sudo systemctl status game-agent</code>
+                    <div className="bg-surface border border-line p-3 rounded-ios">
+                      <span className="text-[11px] text-ink-2 block mb-1">Kiểm tra trạng thái Agent service:</span>
+                      <code className="text-[12px] font-mono text-accent break-all">sudo systemctl status game-agent</code>
                     </div>
-                    <div className="bg-slate-900 border border-slate-850 p-3 rounded-xl">
-                      <span className="text-slate-400 block text-[10px] font-sans font-semibold mb-0.5">Theo dõi tiến trình CPU/RAM:</span>
-                      <code className="text-yellow-400">htop</code>
+                    <div className="bg-surface border border-line p-3 rounded-ios">
+                      <span className="text-[11px] text-ink-2 block mb-1">Theo dõi tiến trình CPU/RAM:</span>
+                      <code className="text-[12px] font-mono text-accent break-all">htop</code>
                     </div>
                   </div>
                 </div>
@@ -1318,13 +1543,11 @@ export default function App() {
             )}
           </div>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center border border-dashed border-slate-800 rounded-3xl p-12 text-center space-y-4">
-            <Activity className="w-16 h-16 text-slate-800 animate-pulse" />
-            <h2 className="text-base font-bold text-slate-300">Không có máy chủ hoạt động</h2>
-            <button
-              onClick={() => setShowAddModal(true)}
-              className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-5 py-2.5 text-xs font-semibold shadow-lg shadow-blue-500/15 active:scale-95 transition-all"
-            >
+          <div className={`${CARD} flex-1 flex flex-col items-center justify-center p-12 text-center space-y-4`}>
+            <Activity className="w-12 h-12 text-ink-3" />
+            <h2 className="text-[17px] font-semibold text-ink">Không có máy chủ hoạt động</h2>
+            <button onClick={() => setShowAddModal(true)} className={BTN_PRIMARY}>
+              <Plus className="w-4 h-4" />
               Thêm Server đầu tiên
             </button>
           </div>
@@ -1333,30 +1556,32 @@ export default function App() {
 
       {/* 3. Detail Container Monitor Split Screen Modal */}
       {selectedContainer && selectedServer && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center p-6 z-50 animate-fade-in">
-          <div className="w-full max-w-6xl bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl flex flex-col h-[90vh] space-y-6">
-            
+        <div className="fixed inset-0 scrim flex items-center justify-center p-4 md:p-6 z-50 animate-fade-in">
+          <div className="w-full max-w-6xl material-strong border border-line rounded-ios-2xl p-5 shadow-e4 flex flex-col h-[90vh] gap-5 animate-sheet-in">
+
             {/* Modal Header */}
-            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-green-500/10 rounded-xl flex items-center justify-center text-green-400">
-                  <Activity className="w-5.5 h-5.5" />
+            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-line pb-4">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 bg-ok/12 rounded-ios flex items-center justify-center text-ok flex-shrink-0">
+                  <Activity className="w-[18px] h-[18px]" />
                 </div>
-                <div>
-                  <h3 className="text-base font-bold text-slate-100">
-                    Giám sát: <span className="text-blue-400 font-mono font-bold">{selectedContainer.name}</span>
+                <div className="min-w-0">
+                  <h3 className="text-[16px] font-semibold text-ink truncate">
+                    Giám sát: <span className="text-accent font-mono">{selectedContainer.name}</span>
                   </h3>
-                  <p className="text-xs text-slate-400 mt-0.5">Container ID: <span className="font-mono text-slate-500">{selectedContainer.id.substring(0, 12)}</span></p>
+                  <p className="text-[12px] text-ink-2 mt-0.5">
+                    Container ID: <span className="font-mono text-ink-3">{selectedContainer.id.substring(0, 12)}</span>
+                  </p>
                 </div>
               </div>
 
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-3">
                 {/* Control Action Buttons */}
-                <div className="flex items-center gap-2 bg-slate-950 p-1.5 rounded-xl border border-slate-800">
+                <div className="flex items-center gap-1 bg-surface-2 p-1 rounded-ios border border-line">
                   <button
                     onClick={() => handleContainerAction('restart')}
                     disabled={isPerformingAction || selectedContainer.state !== 'running'}
-                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-xs transition-all active:scale-95"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-ios-xs text-accent hover:bg-accent/12 font-semibold text-[12px] transition-all active:scale-95 disabled:opacity-40 disabled:hover:bg-transparent"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${isPerformingAction ? 'animate-spin' : ''}`} />
                     Restart
@@ -1364,7 +1589,7 @@ export default function App() {
                   <button
                     onClick={() => handleContainerAction('stop')}
                     disabled={isPerformingAction || selectedContainer.state !== 'running'}
-                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-red-600/10 hover:bg-red-600/20 text-red-500 font-bold text-xs transition-all active:scale-95"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-ios-xs text-bad hover:bg-bad/12 font-semibold text-[12px] transition-all active:scale-95 disabled:opacity-40 disabled:hover:bg-transparent"
                   >
                     <Square className="w-3.5 h-3.5" />
                     Stop
@@ -1372,135 +1597,120 @@ export default function App() {
                   <button
                     onClick={() => handleContainerAction('start')}
                     disabled={isPerformingAction || selectedContainer.state === 'running'}
-                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-green-600/10 hover:bg-green-600/20 text-green-500 font-bold text-xs transition-all active:scale-95"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-ios-xs text-ok hover:bg-ok/12 font-semibold text-[12px] transition-all active:scale-95 disabled:opacity-40 disabled:hover:bg-transparent"
                   >
                     <Play className="w-3.5 h-3.5" />
                     Start
                   </button>
                 </div>
 
-                <button
-                  onClick={() => setSelectedContainer(null)}
-                  className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 border border-slate-700/60 rounded-xl transition-all"
-                >
+                <button onClick={() => setSelectedContainer(null)} className={ICON_BTN} title="Đóng">
                   <X className="w-4 h-4" />
                 </button>
               </div>
             </div>
 
             {/* Split Content view */}
-            <div className="flex-1 flex flex-col md:flex-row gap-6 overflow-hidden min-h-0">
-              
+            <div className="flex-1 flex flex-col md:flex-row gap-5 overflow-hidden min-h-0">
+
               {/* Left Side: Live Stats widgets & details */}
-              <div className="w-full md:w-1/3 flex flex-col gap-4 overflow-y-auto">
-                <div className="bg-slate-950 p-4 border border-slate-850 rounded-2xl space-y-4">
-                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Thông số thời gian thực (Live metrics)</div>
-                  
+              <div className="w-full md:w-1/3 flex flex-col gap-3 overflow-y-auto pr-1">
+                <div className={`${INSET} p-4 space-y-4`}>
+                  <div className={LABEL}>Thông số thời gian thực</div>
+
                   {containerStats ? (
                     <div className="space-y-4">
                       {/* CPU usage bar */}
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-xs font-semibold">
-                          <span className="text-slate-400">Container CPU Usage</span>
-                          <span className="text-blue-400 font-mono font-bold">{containerStats.cpu_percent.toFixed(2)} %</span>
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between text-[12px]">
+                          <span className="text-ink-2">Container CPU Usage</span>
+                          <span className="text-ink font-semibold font-mono tabular-nums">{containerStats.cpu_percent.toFixed(2)} %</span>
                         </div>
-                        <div className="w-full bg-slate-800 rounded-full h-2">
-                          <div
-                            className="bg-blue-500 h-2 rounded-full transition-all duration-500"
-                            style={{ width: `${Math.min(containerStats.cpu_percent, 100)}%` }}
-                          />
-                        </div>
+                        <Meter value={containerStats.cpu_percent} tone="var(--c-accent)" />
                       </div>
 
                       {/* Memory usage bar */}
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-xs font-semibold">
-                          <span className="text-slate-400">Container Memory</span>
-                          <span className="text-purple-400 font-mono font-bold">
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between text-[12px] gap-2">
+                          <span className="text-ink-2 flex-shrink-0">Container Memory</span>
+                          <span className="text-ink font-semibold font-mono tabular-nums text-right">
                             {formatBytes(containerStats.memory_used_bytes)} / {formatBytes(containerStats.memory_limit_bytes)} ({containerStats.memory_percent.toFixed(1)}%)
                           </span>
                         </div>
-                        <div className="w-full bg-slate-800 rounded-full h-2">
-                          <div
-                            className="bg-purple-500 h-2 rounded-full transition-all duration-500"
-                            style={{ width: `${Math.min(containerStats.memory_percent, 100)}%` }}
-                          />
-                        </div>
+                        <Meter value={containerStats.memory_percent} tone="var(--c-alt)" />
                       </div>
 
                       {/* Additional metrics */}
-                      <div className="border-t border-slate-850 pt-3.5 space-y-2.5 text-xs">
-                        <div className="flex justify-between">
-                          <span className="text-slate-500">Uptime:</span>
-                          <span className="font-mono text-slate-300 font-semibold flex items-center gap-1">
-                            <Clock className="w-3.5 h-3.5 text-slate-500" />
+                      <div className="border-t border-line pt-3.5 space-y-2.5 text-[12px]">
+                        <div className="flex justify-between gap-2">
+                          <span className="text-ink-2">Uptime</span>
+                          <span className="font-mono text-ink font-medium flex items-center gap-1.5 tabular-nums">
+                            <Clock className="w-3.5 h-3.5 text-ink-3" />
                             {Math.floor(containerStats.uptime_seconds / 3600)}h {Math.floor((containerStats.uptime_seconds % 3600) / 60)}m {containerStats.uptime_seconds % 60}s
                           </span>
                         </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-500">Container IP:</span>
-                          <span className="font-mono text-slate-300 font-semibold">{containerStats.ip_address || 'None'}</span>
+                        <div className="flex justify-between gap-2">
+                          <span className="text-ink-2">Container IP</span>
+                          <span className="font-mono text-ink font-medium">{containerStats.ip_address || 'None'}</span>
                         </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-500">Network RX/TX:</span>
-                          <span className="font-mono text-slate-300 font-semibold">
+                        <div className="flex justify-between gap-2">
+                          <span className="text-ink-2">Network RX/TX</span>
+                          <span className="font-mono text-ink font-medium tabular-nums">
                             {formatBytes(containerStats.network_rx_bytes)} / {formatBytes(containerStats.network_tx_bytes)}
                           </span>
                         </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-500">Disk Read/Write:</span>
-                          <span className="font-mono text-slate-300 font-semibold">
+                        <div className="flex justify-between gap-2">
+                          <span className="text-ink-2">Disk Read/Write</span>
+                          <span className="font-mono text-ink font-medium tabular-nums">
                             {formatBytes(containerStats.block_read_bytes)} / {formatBytes(containerStats.block_write_bytes)}
                           </span>
                         </div>
                       </div>
 
                       {/* Port mapping widget */}
-                      <div className="border-t border-slate-850 pt-3.5 space-y-1.5">
-                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Port Mappings</span>
+                      <div className="border-t border-line pt-3.5 space-y-2">
+                        <span className={`${LABEL} block`}>Port Mappings</span>
                         <div className="flex flex-wrap gap-1.5">
                           {containerStats.ports.length > 0 ? (
                             containerStats.ports.map((p, idx) => (
-                              <span key={idx} className="bg-slate-900 border border-slate-800 text-[10px] font-mono text-slate-300 px-2 py-0.5 rounded">
+                              <span key={idx} className="bg-surface border border-line text-[11px] font-mono text-ink-2 px-2 py-0.5 rounded-ios-xs">
                                 {p}
                               </span>
                             ))
                           ) : (
-                            <span className="text-xs text-slate-500 font-semibold">Không có Port Mapping</span>
+                            <span className="text-[12px] text-ink-3">Không có Port Mapping</span>
                           )}
                         </div>
                       </div>
 
                       {/* TCP Connections & Group by Port Widget */}
-                      <div className="border-t border-slate-850 pt-3.5 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                            <Wifi className="w-3.5 h-3.5 text-blue-400" />
-                            Kết nối TCP (Group by Port)
-                          </span>
-                        </div>
+                      <div className="border-t border-line pt-3.5 space-y-3">
+                        <span className={`${LABEL} flex items-center gap-1.5`}>
+                          <Wifi className="w-3.5 h-3.5" />
+                          Kết nối TCP (Group by Port)
+                        </span>
 
                         <div className="grid grid-cols-2 gap-2">
-                          <div className="bg-slate-900 border border-slate-800 p-2.5 rounded-xl flex items-center gap-2.5">
-                            <div className="p-2 bg-blue-500/10 text-blue-400 rounded-lg">
+                          <div className="bg-surface border border-line p-2.5 rounded-ios flex items-center gap-2.5">
+                            <div className="p-2 bg-accent/12 text-accent rounded-ios-xs">
                               <Users className="w-4 h-4" />
                             </div>
-                            <div>
-                              <div className="text-[9px] font-bold text-slate-500 uppercase">Unique Clients</div>
-                              <div className="text-sm font-extrabold text-slate-100 font-mono">
-                                {containerStats.unique_connections ?? 0} <span className="text-[10px] text-slate-500 font-normal">IPs</span>
+                            <div className="min-w-0">
+                              <div className="text-[10px] font-medium text-ink-2 uppercase tracking-wide">Unique Clients</div>
+                              <div className="text-[15px] font-semibold text-ink font-mono tabular-nums">
+                                {containerStats.unique_connections ?? 0} <span className="text-[11px] text-ink-3 font-normal">IPs</span>
                               </div>
                             </div>
                           </div>
 
-                          <div className="bg-slate-900 border border-slate-800 p-2.5 rounded-xl flex items-center gap-2.5">
-                            <div className="p-2 bg-green-500/10 text-green-400 rounded-lg">
+                          <div className="bg-surface border border-line p-2.5 rounded-ios flex items-center gap-2.5">
+                            <div className="p-2 bg-ok/12 text-ok rounded-ios-xs">
                               <Activity className="w-4 h-4" />
                             </div>
-                            <div>
-                              <div className="text-[9px] font-bold text-slate-500 uppercase">Total Sockets</div>
-                              <div className="text-sm font-extrabold text-slate-100 font-mono">
-                                {containerStats.total_connections ?? 0} <span className="text-[10px] text-slate-500 font-normal">conns</span>
+                            <div className="min-w-0">
+                              <div className="text-[10px] font-medium text-ink-2 uppercase tracking-wide">Total Sockets</div>
+                              <div className="text-[15px] font-semibold text-ink font-mono tabular-nums">
+                                {containerStats.total_connections ?? 0} <span className="text-[11px] text-ink-3 font-normal">conns</span>
                               </div>
                             </div>
                           </div>
@@ -1510,37 +1720,37 @@ export default function App() {
                         {containerStats.ports_stats && containerStats.ports_stats.length > 0 && (
                           <div className="space-y-2">
                             {containerStats.ports_stats.map((ps) => (
-                              <div key={ps.port} className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-2.5 space-y-2">
-                                <div className="flex items-center justify-between text-xs">
-                                  <span className="font-mono font-bold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded text-[11px]">
+                              <div key={ps.port} className="bg-surface border border-line rounded-ios p-2.5 space-y-2">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-mono font-semibold text-accent bg-accent/12 px-2 py-0.5 rounded-ios-xs text-[11px]">
                                     Port :{ps.port}
                                   </span>
                                   <div className="flex items-center gap-2 text-[11px] font-mono">
-                                    <span className="text-slate-400">
-                                      <strong className="text-emerald-400">{ps.unique_connections}</strong> unique IP
+                                    <span className="text-ink-2">
+                                      <strong className="text-ok font-semibold">{ps.unique_connections}</strong> unique IP
                                     </span>
-                                    <span className="text-slate-600">•</span>
-                                    <span className="text-slate-400">
-                                      <strong className="text-slate-200">{ps.total_connections}</strong> sockets
+                                    <span className="text-ink-3">•</span>
+                                    <span className="text-ink-2">
+                                      <strong className="text-ink font-semibold">{ps.total_connections}</strong> sockets
                                     </span>
                                   </div>
                                 </div>
 
                                 {ps.unique_ips && ps.unique_ips.length > 0 ? (
-                                  <div className="flex flex-wrap gap-1 pt-1 border-t border-slate-850">
+                                  <div className="flex flex-wrap gap-1 pt-2 border-t border-line">
                                     {ps.unique_ips.slice(0, 10).map((ip, iidx) => (
-                                      <span key={iidx} className="bg-slate-950 border border-slate-800 text-[10px] font-mono text-slate-400 px-1.5 py-0.5 rounded" title={ip}>
+                                      <span key={iidx} className="bg-surface-2 border border-line text-[10px] font-mono text-ink-2 px-1.5 py-0.5 rounded-ios-xs" title={ip}>
                                         {ip}
                                       </span>
                                     ))}
                                     {ps.unique_ips.length > 10 && (
-                                      <span className="text-[10px] font-mono text-slate-500 px-1 py-0.5">
+                                      <span className="text-[10px] font-mono text-ink-3 px-1 py-0.5">
                                         +{ps.unique_ips.length - 10} IP khác...
                                       </span>
                                     )}
                                   </div>
                                 ) : (
-                                  <div className="text-[10px] text-slate-600 italic">Chưa có kết nối active</div>
+                                  <div className="text-[11px] text-ink-3">Chưa có kết nối active</div>
                                 )}
                               </div>
                             ))}
@@ -1550,15 +1760,15 @@ export default function App() {
 
                     </div>
                   ) : (
-                    <div className="py-12 flex flex-col items-center justify-center text-slate-600 text-xs">
-                      <RefreshCw className="w-6 h-6 animate-spin mb-2 text-slate-700" />
+                    <div className="py-12 flex flex-col items-center justify-center text-ink-3 text-[12px]">
+                      <RefreshCw className="w-5 h-5 animate-spin mb-2" />
                       Đang tải tài nguyên...
                     </div>
                   )}
                 </div>
 
-                <div className="bg-slate-950 p-4 border border-slate-850 rounded-2xl flex gap-3 text-xs text-slate-400 items-start">
-                  <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                <div className={`${INSET} p-4 flex gap-3 text-[12px] text-ink-2 items-start leading-relaxed`}>
+                  <AlertTriangle className="w-4 h-4 text-warn flex-shrink-0 mt-0.5" />
                   <span>
                     Các hành động Restart, Stop, Start sẽ tương tác trực tiếp lên dịch vụ Docker của hệ thống. Vui lòng đảm bảo các client khác đã ngắt kết nối an toàn trước khi thực hiện.
                   </span>
@@ -1566,33 +1776,33 @@ export default function App() {
               </div>
 
               {/* Right Side: Terminal log stream with search bar */}
-              <div className="flex-1 flex flex-col bg-slate-950 border border-slate-850 rounded-2xl overflow-hidden shadow-inner">
+              <div className="flex-1 flex flex-col bg-surface-2 border border-line rounded-ios-lg overflow-hidden min-h-0">
                 {/* Console Terminal Header */}
-                <div className="flex items-center justify-between bg-slate-950 border-b border-slate-850/80 px-4 py-2.5 text-xs text-slate-400 font-semibold">
-                  <div className="flex items-center gap-2">
-                    <Terminal className="w-4 h-4 text-blue-500 animate-pulse" />
+                <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5 text-[12px] text-ink-2">
+                  <div className="flex items-center gap-2 font-medium">
+                    <Terminal className="w-4 h-4" />
                     <span>Real-time Log stream</span>
                   </div>
-                  
+
                   {/* Log Filter input */}
                   <input
                     type="text"
                     placeholder="Lọc log..."
                     value={logFilter}
                     onChange={e => setLogFilter(e.target.value)}
-                    className="bg-slate-900 border border-slate-800/80 rounded px-2 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-blue-500 w-44 font-mono font-normal"
+                    className="bg-surface border border-line rounded-ios-xs px-2.5 py-1 text-[12px] text-ink placeholder:text-ink-3 focus:outline-none focus:border-accent w-44 font-mono"
                   />
                 </div>
 
                 {/* Terminal Body */}
-                <div className="flex-grow p-4 overflow-y-auto font-mono text-[11px] bg-black text-green-400 space-y-1 min-h-0">
+                <div className="flex-grow p-4 overflow-y-auto font-mono text-[12px] bg-surface text-ink space-y-1 min-h-0">
                   {getFilteredLogs() ? (
                     <pre className="whitespace-pre-wrap leading-relaxed break-all">
                       {getFilteredLogs()}
                     </pre>
                   ) : (
-                    <div className="h-full flex flex-col items-center justify-center text-slate-600 font-semibold">
-                      <FileText className="w-8 h-8 text-slate-800 mb-2" />
+                    <div className="h-full flex flex-col items-center justify-center text-ink-3">
+                      <FileText className="w-7 h-7 mb-2" />
                       Không tìm thấy log nào phù hợp.
                     </div>
                   )}
@@ -1607,65 +1817,58 @@ export default function App() {
 
       {/* 4. Add Server Modal */}
       {showAddModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4">
+        <div className="fixed inset-0 scrim flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="w-full max-w-md material-strong border border-line rounded-ios-xl p-6 shadow-e4 space-y-5 animate-sheet-in">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 bg-blue-600/10 rounded-lg flex items-center justify-center text-blue-400">
-                <Plus className="w-5 h-5" />
+              <div className="w-9 h-9 bg-accent/12 rounded-ios flex items-center justify-center text-accent">
+                <Plus className="w-[18px] h-[18px]" />
               </div>
-              <h3 className="text-base font-bold text-slate-100">Đăng ký Server Game mới</h3>
+              <h3 className="text-[17px] font-semibold tracking-tight text-ink">Đăng ký Server Game mới</h3>
             </div>
 
             <form onSubmit={handleAddServer} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold uppercase text-slate-400 mb-1.5">Tên Server</label>
+              <div className="space-y-1.5">
+                <label className={LABEL}>Tên Server</label>
                 <input
                   type="text"
                   value={newName}
                   onChange={e => setNewName(e.target.value)}
                   placeholder="Ví dụ: Minecraft Survival Server"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-slate-100 focus:outline-none focus:border-blue-500 text-xs font-semibold transition-all"
+                  className={`${FIELD} text-[13px]`}
                   required
                 />
               </div>
-              
-              <div>
-                <label className="block text-xs font-semibold uppercase text-slate-400 mb-1.5">Agent URL (IP / Domain)</label>
+
+              <div className="space-y-1.5">
+                <label className={LABEL}>Agent URL (IP / Domain)</label>
                 <input
                   type="url"
                   value={newUrl}
                   onChange={e => setNewUrl(e.target.value)}
                   placeholder="http://192.168.1.100:6678"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-slate-100 focus:outline-none focus:border-blue-500 text-xs font-mono transition-all"
+                  className={`${FIELD} text-[13px] font-mono`}
                   required
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold uppercase text-slate-400 mb-1.5">Mã bảo mật Token (Secret Key)</label>
+              <div className="space-y-1.5">
+                <label className={LABEL}>Mã bảo mật Token (Secret Key)</label>
                 <input
                   type="text"
                   value={newToken}
                   onChange={e => setNewToken(e.target.value)}
                   placeholder="secret-agent-token-123"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-slate-100 focus:outline-none focus:border-blue-500 text-xs font-mono transition-all"
+                  className={`${FIELD} text-[13px] font-mono`}
                   required
                 />
               </div>
 
-              <div className="flex gap-3 justify-end pt-2 text-xs">
-                <button
-                  type="button"
-                  onClick={() => setShowAddModal(false)}
-                  className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-lg px-4 py-2 transition-all active:scale-95"
-                >
+              <div className="flex gap-2.5 justify-end pt-1">
+                <button type="button" onClick={() => setShowAddModal(false)} className={`${BTN_QUIET} text-[13px] py-2`}>
                   Hủy bỏ
                 </button>
-                <button
-                  type="submit"
-                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg px-4 py-2 transition-all active:scale-95 shadow-lg shadow-blue-500/10"
-                >
-                  Kết nối & Lưu
+                <button type="submit" className={`${BTN_PRIMARY} text-[13px] py-2`}>
+                  Kết nối &amp; Lưu
                 </button>
               </div>
             </form>
@@ -1675,68 +1878,65 @@ export default function App() {
 
       {/* 5. Edit Server Modal */}
       {showEditModal && editingServer && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4">
+        <div className="fixed inset-0 scrim flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="w-full max-w-md material-strong border border-line rounded-ios-xl p-6 shadow-e4 space-y-5 animate-sheet-in">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 bg-blue-600/10 rounded-lg flex items-center justify-center text-blue-400">
-                <Edit2 className="w-5 h-5" />
+              <div className="w-9 h-9 bg-accent/12 rounded-ios flex items-center justify-center text-accent">
+                <Edit2 className="w-[18px] h-[18px]" />
               </div>
-              <h3 className="text-base font-bold text-slate-100">Chỉnh sửa Server Game</h3>
+              <h3 className="text-[17px] font-semibold tracking-tight text-ink">Chỉnh sửa Server Game</h3>
             </div>
 
             <form onSubmit={handleEditServer} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold uppercase text-slate-400 mb-1.5">Tên Server</label>
+              <div className="space-y-1.5">
+                <label className={LABEL}>Tên Server</label>
                 <input
                   type="text"
                   value={editName}
                   onChange={e => setEditName(e.target.value)}
                   placeholder="Ví dụ: Minecraft Survival Server"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-slate-100 focus:outline-none focus:border-blue-500 text-xs font-semibold transition-all"
+                  className={`${FIELD} text-[13px]`}
                   required
                 />
               </div>
-              
-              <div>
-                <label className="block text-xs font-semibold uppercase text-slate-400 mb-1.5">Agent URL (IP / Domain)</label>
+
+              <div className="space-y-1.5">
+                <label className={LABEL}>Agent URL (IP / Domain)</label>
                 <input
                   type="url"
                   value={editUrl}
                   onChange={e => setEditUrl(e.target.value)}
                   placeholder="http://192.168.1.100:6678"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-slate-100 focus:outline-none focus:border-blue-500 text-xs font-mono transition-all"
+                  className={`${FIELD} text-[13px] font-mono`}
                   required
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold uppercase text-slate-400 mb-1.5">Mã bảo mật Token (Secret Key)</label>
+              <div className="space-y-1.5">
+                <label className={LABEL}>Mã bảo mật Token (Secret Key)</label>
                 <input
                   type="text"
                   value={editToken}
                   onChange={e => setEditToken(e.target.value)}
                   placeholder="secret-agent-token-123"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-slate-100 focus:outline-none focus:border-blue-500 text-xs font-mono transition-all"
+                  className={`${FIELD} text-[13px] font-mono`}
                   required
                 />
               </div>
 
-              <div className="flex gap-3 justify-end pt-2 text-xs">
+              <div className="flex gap-2.5 justify-end pt-1">
                 <button
                   type="button"
                   onClick={() => {
                     setShowEditModal(false)
                     setEditingServer(null)
                   }}
-                  className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-lg px-4 py-2 transition-all active:scale-95"
+                  className={`${BTN_QUIET} text-[13px] py-2`}
                 >
                   Hủy bỏ
                 </button>
-                <button
-                  type="submit"
-                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg px-4 py-2 transition-all active:scale-95 shadow-lg shadow-blue-500/10"
-                >
-                  Cập nhật & Lưu
+                <button type="submit" className={`${BTN_PRIMARY} text-[13px] py-2`}>
+                  Cập nhật &amp; Lưu
                 </button>
               </div>
             </form>
@@ -1758,6 +1958,7 @@ export default function App() {
       )}
 
     </div>
+    </ThemeContext.Provider>
   )
 }
 
@@ -1781,88 +1982,114 @@ function SshMultiTabModal({
   const [showAddTabMenu, setShowAddTabMenu] = useState(false)
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 md:p-6 z-50 animate-fade-in">
-      <div className="w-full max-w-6xl bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-2xl flex flex-col h-[88vh] space-y-4">
-        
-        {/* Top Header & Tab Bar */}
-        <div className="flex items-center justify-between border-b border-slate-800 pb-3.5 gap-4">
-          
-          {/* Scrollable Tabs List */}
-          <div className="flex items-center gap-2 overflow-x-auto flex-1 py-1 pr-2 min-w-0">
-            {tabs.map((tab) => {
-              const isActive = tab.id === activeTabId
-              return (
-                <div
-                  key={tab.id}
-                  onClick={() => onSelectTab(tab.id)}
-                  className={`flex items-center gap-2.5 px-3.5 py-2 rounded-xl border text-xs font-mono font-bold cursor-pointer transition-all flex-shrink-0 group ${
-                    isActive
-                      ? 'bg-blue-600/15 border-blue-500 text-blue-400 shadow-md shadow-blue-500/10'
-                      : 'bg-slate-950/60 border-slate-800/80 text-slate-400 hover:bg-slate-800/40 hover:text-slate-200'
-                  }`}
-                >
-                  <Terminal className={`w-3.5 h-3.5 ${isActive ? 'text-blue-400' : 'text-slate-500'}`} />
-                  <span className="truncate max-w-[130px]">{tab.serverName}</span>
-                  
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onCloseTab(tab.id)
-                    }}
-                    className="p-1 hover:bg-slate-700/60 text-slate-500 hover:text-red-400 rounded-lg transition-colors"
-                    title="Đóng Tab SSH"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              )
-            })}
+    <div className="fixed inset-0 scrim flex items-center justify-center p-4 md:p-6 z-50 animate-fade-in">
+      <div className="w-full max-w-6xl material-strong border border-line rounded-ios-2xl p-5 shadow-e4 flex flex-col h-[88vh] gap-4 animate-sheet-in">
 
-            {/* New Tab Button */}
+        {/* Top Header & Tab Bar */}
+        <div className="flex flex-col gap-3 border-b border-line pb-3.5">
+
+          {/* Title row */}
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="p-2 rounded-ios-sm bg-accent/12 text-accent flex-shrink-0">
+                <Terminal className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-[15px] font-semibold text-ink leading-tight">SSH Terminal</h3>
+                <p className="text-[11.5px] text-ink-2 leading-tight">
+                  {tabs.length} phiên đang mở
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={onCloseAll}
+              className={`${ICON_BTN_SM} hover:text-bad flex-shrink-0`}
+              title="Đóng tất cả các Tab"
+            >
+              <X className="w-[15px] h-[15px]" />
+            </button>
+          </div>
+
+          {/* Tab strip — the new-tab control sits OUTSIDE the scroll area so its
+              dropdown can float above the modal instead of being clipped. */}
+          <div className="flex items-stretch gap-2 min-w-0">
+            <div className="flex items-center gap-1.5 overflow-x-auto flex-1 min-w-0 pb-0.5">
+              {tabs.map((tab) => {
+                const isActive = tab.id === activeTabId
+                return (
+                  <div
+                    key={tab.id}
+                    onClick={() => onSelectTab(tab.id)}
+                    className={`group flex items-center gap-2 h-[32px] pl-2.5 pr-1.5 rounded-ios-sm text-[12px] font-mono font-semibold cursor-pointer transition-all flex-shrink-0 ${
+                      isActive
+                        ? 'bg-accent text-accent-ink shadow-e1'
+                        : 'bg-surface-2 border border-line text-ink-2 hover:text-ink hover:bg-surface-3'
+                    }`}
+                  >
+                    <Terminal className={`w-3.5 h-3.5 flex-shrink-0 ${isActive ? 'text-accent-ink' : 'text-ink-3'}`} />
+                    <span className="truncate max-w-[140px]">{tab.serverName}</span>
+
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onCloseTab(tab.id)
+                      }}
+                      className={`p-1 rounded-ios-xs transition-colors ${
+                        isActive ? 'text-accent-ink/70 hover:text-accent-ink' : 'text-ink-3 hover:text-bad'
+                      }`}
+                      title="Đóng Tab SSH"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* New Tab Button + floating server picker */}
             <div className="relative flex-shrink-0">
               <button
                 onClick={() => setShowAddTabMenu(!showAddTabMenu)}
-                className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold border border-slate-700/60 rounded-xl text-xs transition-all active:scale-95"
+                className={`inline-flex items-center gap-1.5 h-[32px] px-3 rounded-ios-sm text-[12px] font-semibold border transition-all active:scale-[0.97] ${
+                  showAddTabMenu
+                    ? 'bg-surface-3 border-line-strong text-ink'
+                    : 'bg-surface-2 border-line text-ink-2 hover:text-ink hover:bg-surface-3'
+                }`}
                 title="Mở Tab SSH mới"
               >
-                <Plus className="w-3.5 h-3.5 text-blue-400" />
+                <Plus className="w-3.5 h-3.5" />
                 <span>Tab mới</span>
               </button>
 
               {/* Server Picker Dropdown */}
               {showAddTabMenu && (
-                <div className="absolute top-full left-0 mt-2 w-56 bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl z-50 p-2 space-y-1">
-                  <div className="text-[10px] font-bold text-slate-500 uppercase px-2 py-1">Chọn Server kết nối:</div>
-                  {servers.length > 0 ? (
-                    servers.map((s) => (
-                      <button
-                        key={s.id}
-                        onClick={() => {
-                          onOpenTab(s)
-                          setShowAddTabMenu(false)
-                        }}
-                        className="w-full text-left flex items-center justify-between px-3 py-2 hover:bg-blue-600/10 rounded-xl text-xs font-semibold text-slate-200 hover:text-blue-400 transition-colors"
-                      >
-                        <span className="truncate">{s.name}</span>
-                        <span className="text-[10px] font-mono text-slate-500 truncate max-w-[80px]">{s.agent_url}</span>
-                      </button>
-                    ))
-                  ) : (
-                    <div className="text-xs text-slate-500 px-2 py-2">Chưa có server nào</div>
-                  )}
-                </div>
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowAddTabMenu(false)} />
+                  <div className="absolute top-full right-0 mt-2 w-64 material-strong border border-line rounded-ios-lg shadow-e4 z-50 p-1.5 space-y-0.5 animate-sheet-in">
+                    <div className={`${LABEL} px-2.5 py-1.5`}>Chọn Server kết nối</div>
+                    {servers.length > 0 ? (
+                      servers.map((s) => (
+                        <button
+                          key={s.id}
+                          onClick={() => {
+                            onOpenTab(s)
+                            setShowAddTabMenu(false)
+                          }}
+                          className="w-full text-left flex items-center justify-between gap-2 px-2.5 py-2 hover:bg-surface-2 rounded-ios-sm text-[13px] font-medium text-ink transition-colors"
+                        >
+                          <span className="truncate">{s.name}</span>
+                          <span className="text-[11px] font-mono text-ink-3 truncate max-w-[90px]">{s.agent_url}</span>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="text-[12px] text-ink-3 px-2.5 py-2">Chưa có server nào</div>
+                    )}
+                  </div>
+                </>
               )}
             </div>
           </div>
-
-          {/* Close Modal Button */}
-          <button
-            onClick={onCloseAll}
-            className="p-2 bg-slate-800 hover:bg-red-600/20 text-slate-400 hover:text-red-400 border border-slate-700/60 rounded-xl transition-all flex-shrink-0"
-            title="Đóng tất cả các Tab"
-          >
-            <X className="w-4 h-4" />
-          </button>
         </div>
 
         {/* SSH Terminals Container Body */}
@@ -1888,6 +2115,8 @@ function SshSingleTabSession({
   tab: SshTab
   isActive: boolean
 }) {
+  const { theme } = useTheme()
+
   const [host, setHost] = useState(tab.sshHost)
   const [port, setPort] = useState(tab.sshPort)
   const [user, setUser] = useState(tab.sshUser)
@@ -1895,14 +2124,49 @@ function SshSingleTabSession({
 
   const [isConnected, setIsConnected] = useState(false)
   const [connecting, setConnecting] = useState(false)
+  const [hasSession, setHasSession] = useState(false)
   const termRef = useRef<HTMLDivElement>(null)
   const socketRef = useRef<WebSocket | null>(null)
   const xtermRef = useRef<XTerminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
+  const themeRef = useRef(theme)
+  themeRef.current = theme
+
+  const xtermTheme = (mode: ThemeMode) =>
+    mode === 'dark'
+      ? {
+          background: '#1c1c1e',
+          foreground: '#f2f2f7',
+          cursor: '#0a84ff',
+          cursorAccent: '#1c1c1e',
+          selectionBackground: 'rgba(10,132,255,0.35)'
+        }
+      : {
+          background: '#ffffff',
+          foreground: '#1c1c1e',
+          cursor: '#007aff',
+          cursorAccent: '#ffffff',
+          selectionBackground: 'rgba(0,122,255,0.25)'
+        }
+
+  // Keep terminal colors in sync with the app theme
+  useEffect(() => {
+    if (xtermRef.current) {
+      xtermRef.current.options.theme = xtermTheme(theme)
+    }
+  }, [theme])
 
   const handleConnect = () => {
     if (!termRef.current) return
     setConnecting(true)
+    setHasSession(true)
+
+    // Reconnecting: drop the previous socket + terminal instance first.
+    if (socketRef.current) socketRef.current.close()
+    if (xtermRef.current) {
+      xtermRef.current.dispose()
+      xtermRef.current = null
+    }
 
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const hostHeader = window.location.host
@@ -1914,13 +2178,8 @@ function SshSingleTabSession({
     const term = new XTerminal({
       cursorBlink: true,
       fontSize: 13,
-      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-      theme: {
-        background: '#090d16',
-        foreground: '#38bdf8',
-        cursor: '#38bdf8',
-        selectionBackground: '#1e293b'
-      }
+      fontFamily: '"SF Mono", ui-monospace, Menlo, Monaco, "Courier New", monospace',
+      theme: xtermTheme(themeRef.current)
     })
     const fitAddon = new FitAddon()
     term.loadAddon(fitAddon)
@@ -1934,7 +2193,7 @@ function SshSingleTabSession({
     ws.onopen = () => {
       setIsConnected(true)
       setConnecting(false)
-      term.writeln('\x1b[1;32m[+] Đã kết nối WebSocket SSH thành công!\x1b[0m\r\n')
+      term.writeln(`\x1b[2m[*] Đang mở phiên SSH tới ${user}@${host}:${port} — chờ xác thực...\x1b[0m\r\n`)
     }
 
     ws.onmessage = (event) => {
@@ -1970,9 +2229,9 @@ function SshSingleTabSession({
     setIsConnected(false)
   }
 
-  // Auto connect when tab mounts
+  // Tear down socket + terminal on unmount. Connecting is user-initiated —
+  // credentials are typed in the session header first.
   useEffect(() => {
-    handleConnect()
     return () => {
       if (socketRef.current) {
         socketRef.current.close()
@@ -1993,81 +2252,123 @@ function SshSingleTabSession({
     }
   }, [isActive])
 
+  const sshField =
+    'h-[30px] bg-surface border border-line rounded-ios-xs px-2.5 text-ink font-mono text-[12px] ' +
+    'transition-all focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 ' +
+    'disabled:opacity-55 disabled:cursor-not-allowed'
+
+  const canConnect = host.trim() !== '' && user.trim() !== '' && !connecting
+
   return (
     <div
       style={{ display: isActive ? 'flex' : 'none' }}
-      className="flex-col h-full space-y-3.5"
+      className="flex-col h-full gap-3"
     >
       {/* Session Controls Header */}
-      <div className="bg-slate-950 p-3 border border-slate-850 rounded-2xl flex flex-wrap items-center justify-between gap-3 text-xs">
-        <div className="flex flex-wrap items-center gap-3 font-semibold">
-          <div className="flex items-center gap-1.5">
-            <span className="text-slate-500">Host:</span>
+      <div className={`${INSET} px-3 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-2.5 text-[12px]`}>
+        <div className="flex items-center gap-2">
+          <span
+            className="w-[7px] h-[7px] rounded-full flex-shrink-0"
+            style={{
+              backgroundColor: isConnected
+                ? 'var(--c-ok)'
+                : connecting
+                  ? 'var(--c-warn)'
+                  : 'var(--c-ink-3)'
+            }}
+          />
+          <span className="font-semibold text-ink">
+            {isConnected ? 'Đang kết nối' : connecting ? 'Đang mở phiên' : 'Chưa kết nối'}
+          </span>
+        </div>
+
+        <div className="w-px h-5 bg-line" />
+
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 flex-1 min-w-0">
+          <label className="flex items-center gap-1.5">
+            <span className="text-ink-2">Host</span>
             <input
               type="text"
               value={host}
               onChange={e => setHost(e.target.value)}
               disabled={isConnected}
-              className="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 font-mono focus:outline-none focus:border-blue-500 w-32 disabled:opacity-60"
+              className={`${sshField} w-[128px]`}
             />
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-slate-500">Port:</span>
+          </label>
+          <label className="flex items-center gap-1.5">
+            <span className="text-ink-2">Port</span>
             <input
               type="number"
               value={port}
               onChange={e => setPort(Number(e.target.value))}
               disabled={isConnected}
-              className="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 font-mono focus:outline-none focus:border-blue-500 w-16 disabled:opacity-60"
+              className={`${sshField} w-[62px]`}
             />
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-slate-500">User:</span>
+          </label>
+          <label className="flex items-center gap-1.5">
+            <span className="text-ink-2">User</span>
             <input
               type="text"
               value={user}
               onChange={e => setUser(e.target.value)}
               disabled={isConnected}
-              className="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 font-mono focus:outline-none focus:border-blue-500 w-24 disabled:opacity-60"
+              placeholder="root"
+              className={`${sshField} w-[96px] placeholder:text-ink-3`}
             />
-          </div>
-          {!isConnected && (
-            <div className="flex items-center gap-1.5">
-              <span className="text-slate-500">Password:</span>
-              <input
-                type="password"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                placeholder="Mật khẩu SSH..."
-                className="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 font-mono focus:outline-none focus:border-blue-500 w-36"
-              />
-            </div>
-          )}
+          </label>
+          <label className="flex items-center gap-1.5">
+            <span className="text-ink-2">Password</span>
+            <input
+              type="password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              disabled={isConnected}
+              placeholder="Mật khẩu SSH"
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !isConnected && canConnect) handleConnect()
+              }}
+              className={`${sshField} w-[140px] placeholder:text-ink-3`}
+            />
+          </label>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-shrink-0">
           {isConnected ? (
             <button
               onClick={handleDisconnect}
-              className="bg-red-600/10 hover:bg-red-600/20 text-red-400 font-bold px-3.5 py-1.5 rounded-xl text-xs transition-all border border-red-500/20 active:scale-95"
+              className="inline-flex items-center justify-center h-[30px] px-3.5 bg-bad/12 text-bad font-semibold rounded-ios-sm text-[12px] transition-all hover:bg-bad/20 active:scale-[0.97]"
             >
               Ngắt kết nối
             </button>
           ) : (
             <button
               onClick={handleConnect}
-              disabled={connecting}
-              className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold px-3.5 py-1.5 rounded-xl text-xs transition-all shadow-md shadow-blue-500/20 active:scale-95"
+              disabled={!canConnect}
+              className="inline-flex items-center justify-center gap-1.5 h-[30px] px-3.5 bg-accent text-accent-ink font-semibold rounded-ios-sm text-[12px] shadow-e1 transition-all hover:opacity-90 active:scale-[0.97] disabled:opacity-45 disabled:cursor-not-allowed"
             >
-              {connecting ? 'Đang kết nối...' : 'Kết nối SSH'}
+              {connecting ? 'Đang kết nối...' : hasSession ? 'Kết nối lại' : 'Kết nối SSH'}
             </button>
           )}
         </div>
       </div>
 
-      {/* XTerm Container */}
-      <div className="flex-1 bg-black border border-slate-800 rounded-2xl p-4 overflow-hidden relative shadow-inner">
-        <div ref={termRef} className="w-full h-full" />
+      {/* XTerm Container — terminal only mounts once a session is started */}
+      <div className="flex-1 bg-surface border border-line rounded-ios-lg overflow-hidden relative">
+        <div ref={termRef} className="w-full h-full p-4" />
+
+        {!hasSession && (
+          <div className="absolute inset-0 bg-surface flex flex-col items-center justify-center gap-3 px-6 text-center">
+            <div className="p-3.5 rounded-ios bg-surface-2 border border-line text-ink-2">
+              <Terminal className="w-6 h-6" />
+            </div>
+            <h4 className="text-[14px] font-semibold text-ink">Phiên SSH chưa được mở</h4>
+            <p className="text-[12px] text-ink-2 max-w-[380px] leading-relaxed">
+              Nhập User và Mật khẩu SSH ở thanh phía trên, sau đó bấm{' '}
+              <span className="font-semibold text-ink">Kết nối SSH</span> để bắt đầu phiên tới{' '}
+              <span className="font-mono text-ink">{host}:{port}</span>.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   )

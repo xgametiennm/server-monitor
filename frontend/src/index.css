@@ -1,17 +1,251 @@
 @import "tailwindcss";
 
-/* Custom dark-cyber theme scrollbars */
+/* =========================================================================
+   Design system — iOS-inspired (iOS 11 → iOS 26 "Liquid Glass")
+   - Materials/vibrancy: translucent surfaces + backdrop blur
+   - Continuous, concentric corner radii
+   - Restrained system palette (one accent, semantic status colors only)
+   - Elevation via soft shadow instead of heavy borders
+   ========================================================================= */
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  color-scheme: light;
+
+  /* Surfaces (iOS systemGroupedBackground / secondary / tertiary) */
+  --c-canvas: #f2f2f7;
+  --c-surface: #ffffff;
+  --c-surface-2: #f7f7fa;
+  --c-surface-3: #ececf1;
+  --c-glass: rgba(255, 255, 255, 0.72);
+  --c-glass-strong: rgba(255, 255, 255, 0.86);
+  --c-scrim: rgba(0, 0, 0, 0.28);
+
+  /* Separators */
+  --c-line: #e3e3e8;
+  --c-line-strong: #d1d1d6;
+
+  /* Labels */
+  --c-ink: #1c1c1e;
+  --c-ink-2: #6c6c70;
+  --c-ink-3: #9a9aa0;
+
+  /* System colors */
+  --c-accent: #007aff;
+  --c-accent-ink: #ffffff;
+  --c-ok: #248a3d;
+  --c-warn: #b25000;
+  --c-bad: #d70015;
+  --c-info: #0071a4;
+  --c-alt: #7d3ac1;
+
+  /* Elevation */
+  --s-1: 0 1px 2px rgba(15, 20, 30, 0.05), 0 1px 1px rgba(15, 20, 30, 0.03);
+  --s-2: 0 1px 2px rgba(15, 20, 30, 0.05), 0 6px 18px -10px rgba(15, 20, 30, 0.16);
+  --s-3: 0 1px 3px rgba(15, 20, 30, 0.06), 0 18px 44px -20px rgba(15, 20, 30, 0.26);
+  --s-4: 0 24px 70px -24px rgba(15, 20, 30, 0.38);
+}
+
+.dark {
+  color-scheme: dark;
+
+  --c-canvas: #000000;
+  --c-surface: #1c1c1e;
+  --c-surface-2: #242426;
+  --c-surface-3: #2c2c2e;
+  --c-glass: rgba(28, 28, 30, 0.72);
+  --c-glass-strong: rgba(28, 28, 30, 0.88);
+  --c-scrim: rgba(0, 0, 0, 0.55);
+
+  --c-line: #303032;
+  --c-line-strong: #3a3a3c;
+
+  --c-ink: #f2f2f7;
+  --c-ink-2: #a1a1a8;
+  --c-ink-3: #78787e;
+
+  --c-accent: #0a84ff;
+  --c-accent-ink: #ffffff;
+  --c-ok: #30d158;
+  --c-warn: #ff9f0a;
+  --c-bad: #ff453a;
+  --c-info: #64d2ff;
+  --c-alt: #bf5af2;
+
+  --s-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --s-2: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 18px -10px rgba(0, 0, 0, 0.6);
+  --s-3: 0 1px 3px rgba(0, 0, 0, 0.5), 0 18px 44px -20px rgba(0, 0, 0, 0.8);
+  --s-4: 0 24px 70px -24px rgba(0, 0, 0, 0.9);
+}
+
+@theme inline {
+  --color-canvas: var(--c-canvas);
+  --color-surface: var(--c-surface);
+  --color-surface-2: var(--c-surface-2);
+  --color-surface-3: var(--c-surface-3);
+  --color-scrim: var(--c-scrim);
+
+  --color-line: var(--c-line);
+  --color-line-strong: var(--c-line-strong);
+
+  --color-ink: var(--c-ink);
+  --color-ink-2: var(--c-ink-2);
+  --color-ink-3: var(--c-ink-3);
+
+  --color-accent: var(--c-accent);
+  --color-accent-ink: var(--c-accent-ink);
+  --color-ok: var(--c-ok);
+  --color-warn: var(--c-warn);
+  --color-bad: var(--c-bad);
+  --color-info: var(--c-info);
+  --color-alt: var(--c-alt);
+
+  /* Continuous corner radii — concentric steps of 4px */
+  --radius-ios-xs: 8px;
+  --radius-ios-sm: 10px;
+  --radius-ios: 14px;
+  --radius-ios-lg: 18px;
+  --radius-ios-xl: 22px;
+  --radius-ios-2xl: 26px;
+
+  --shadow-e1: var(--s-1);
+  --shadow-e2: var(--s-2);
+  --shadow-e3: var(--s-3);
+  --shadow-e4: var(--s-4);
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter",
+    "Segoe UI", system-ui, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, "JetBrains Mono", "Menlo", "Consolas",
+    monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--c-canvas);
+  color: var(--c-ink);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv11", "ss01";
+}
+
+/* Continuous (squircle-like) corners where supported */
+* {
+  corner-shape: superellipse(2);
+}
+
+/* --- Materials ---------------------------------------------------------- */
+
+.material {
+  background-color: var(--c-glass);
+  -webkit-backdrop-filter: saturate(180%) blur(22px);
+  backdrop-filter: saturate(180%) blur(22px);
+}
+
+.material-strong {
+  background-color: var(--c-glass-strong);
+  -webkit-backdrop-filter: saturate(180%) blur(30px);
+  backdrop-filter: saturate(180%) blur(30px);
+}
+
+.scrim {
+  background-color: var(--c-scrim);
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+}
+
+/* --- Motion ------------------------------------------------------------- */
+
+@keyframes ios-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ios-sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-fade-in {
+  animation: ios-fade-in 0.18s ease-out both;
+}
+
+.animate-sheet-in {
+  animation: ios-sheet-in 0.26s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in,
+  .animate-sheet-in {
+    animation: none;
+  }
+}
+
+/* --- Controls ----------------------------------------------------------- */
+
+input,
+button,
+textarea,
+select {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 2px;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(var(--picker-invert, 0));
+  opacity: 0.6;
+  cursor: pointer;
+}
+.dark input[type="date"]::-webkit-calendar-picker-indicator {
+  --picker-invert: 1;
+}
+
+/* --- Scrollbars (theme-aware, iOS-like overlay feel) -------------------- */
+
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: #020617;
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #1e293b;
-  border-radius: 4px;
+  background: var(--c-line-strong);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #3b82f6;
+  background: var(--c-ink-3);
+  background-clip: content-box;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--c-line-strong) transparent;
+}
+
+/* --- xterm surface ------------------------------------------------------ */
+
+.xterm .xterm-viewport {
+  background-color: transparent !important;
 }
